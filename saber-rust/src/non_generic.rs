@@ -139,7 +139,7 @@ macro_rules! __generate_non_generic_impl {
 
         #[repr(C)]
         #[derive(Clone)]
-        struct INDCPAPublicKey {
+        pub struct INDCPAPublicKey {
             vec: Vector,
             seed: [u8; SEEDBYTES],
         }
@@ -170,7 +170,7 @@ macro_rules! __generate_non_generic_impl {
 
         #[repr(C)]
         #[derive(Clone)]
-        struct INDCPASecretKey {
+        pub struct INDCPASecretKey {
             vec: Vector,
         }
 
@@ -249,6 +249,12 @@ macro_rules! __generate_non_generic_impl {
             generic::keygen::<$struct>()
         }
 
+        /// Generate a saber keypair for the IND-CPA-secure version of this KEM.
+        /// **NOTE:** this is NOT a secure way of encapsulating things. Do not use this.
+        pub fn keygen_ind_cpa() -> (INDCPAPublicKey, INDCPASecretKey) {
+            generic::indcpa_kem_keypair::<$struct>()
+        }
+
         /// Encapsulate a secret destined for `pk_cca`.
         ///
         /// Takes a reference to Bob's [`PublicKey`] and returns a ([`SharedSecret`],
@@ -272,6 +278,15 @@ macro_rules! __generate_non_generic_impl {
             generic::encapsulate::<$struct>(&pk_cca)
         }
 
+        /// Encapsulate a secret destined for `pk`, using the IND-CPA-secure version of the KEM.
+        /// **NOTE:** this is NOT a secure way of encapsulating things. Do not use this.
+        ///
+        /// Takes a reference to Bob's [`INDCPAPublicKey`] and returns a ([`SharedSecret`],
+        /// [`CPACiphertext`]) tuple.
+        pub fn encapsulate_ind_cpa(pk: &INDCPAPublicKey) -> (SharedSecret, Ciphertext) {
+            generic::encapsulate_ind_cpa::<$struct>(&pk)
+        }
+
         /// Decapsulate a received ciphertext
         ///
         /// This function uses a `[SecretKey]` reference and decapsulate, sk: &SecretKey) the `[Ciphertext]`
@@ -290,6 +305,16 @@ macro_rules! __generate_non_generic_impl {
         /// ```
         pub fn decapsulate(ct: &Ciphertext, sk: &SecretKey) -> SharedSecret {
             generic::decapsulate::<$struct>(ct, sk)
+        }
+
+        /// Decapsulate a received ciphertext, using an IND-CPA-secure version of the KEM.
+        /// **NOTE:** this is NOT a secure way of decapsulating things. Do not use this.
+        ///
+        /// This function uses a `[INDCPASecretKey]` reference and decapsulates the `[Ciphertext]`
+        /// referenced by `ct`. A `[SharedSecret]` will be returned. In Saber, decryption failures
+        /// are dealt with, so this function will always succeed.
+        pub fn decapsulate_ind_cpa(ct: &Ciphertext, sk: &INDCPASecretKey) -> SharedSecret {
+            generic::decapsulate_ind_cpa::<$struct>(ct, sk)
         }
 
     };

@@ -542,6 +542,17 @@ pub(crate) fn encapsulate<I: SaberImpl>(pk_cca: &I::PublicKey) -> (SharedSecret,
     (SharedSecret::from(sessionkey_cca), ciphertext_cca)
 }
 
+pub(crate) fn encapsulate_ind_cpa<I: SaberImpl>(
+    pk_cpa: &I::INDCPAPublicKey,
+) -> (SharedSecret, I::Ciphertext) {
+    let mut m = [0; KEYBYTES];
+    let mut r = [0; KEYBYTES];
+    rand_os::OsRng::new().unwrap().fill_bytes(&mut m);
+    rand_os::OsRng::new().unwrap().fill_bytes(&mut r);
+    let ciphertext_cpa = indcpa_kem_enc::<I>(&m, &r, pk_cpa);
+    (SharedSecret::from(m), ciphertext_cpa)
+}
+
 /// This function implements Saber.KEM.Decaps, as described in Algorithm 28
 pub(crate) fn decapsulate<I: SaberImpl>(ct: &I::Ciphertext, sk: &I::SecretKey) -> SharedSecret {
     #![allow(clippy::many_single_char_names)]
@@ -572,6 +583,13 @@ pub(crate) fn decapsulate<I: SaberImpl>(ct: &I::Ciphertext, sk: &I::SecretKey) -
     let mut sessionkey_cca = [0; KEYBYTES];
     sessionkey_cca.copy_from_slice(hasher.result().as_slice());
     SharedSecret::from(sessionkey_cca)
+}
+
+pub(crate) fn decapsulate_ind_cpa<I: SaberImpl>(
+    ct: &I::Ciphertext,
+    sk: &I::INDCPASecretKey,
+) -> SharedSecret {
+    SharedSecret(indcpa_kem_dec::<I>(sk, ct))
 }
 
 /// This function implements Verify, with some tweaks.
