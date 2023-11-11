@@ -21,12 +21,39 @@
 * Returns 0 (success)
 **************************************************/
 int PQCLEAN_DILITHIUM5_CLEAN_crypto_sign_keypair(uint8_t *pk, uint8_t *sk) {
+    /* Make random coins and pass it to the deterministic verision of the function */
+    uint8_t coins[SEEDBYTES];
+    randombytes(coins, SEEDBYTES);
+    return PQCLEAN_DILITHIUM5_CLEAN_crypto_sign_keypair_det(coins, pk, sk);
+}
+
+/*************************************************
+* Name:        PQCLEAN_DILITHIUM5_CLEAN_crypto_sign_keypair_det
+*
+* Description: Generates public and private key.
+*
+* Arguments:   - uint8_t *coins: pointer to a buffer containing random bytes (allocated array of
+   *                             SEEDBYTES bytes)
+*          :   - uint8_t *pk: pointer to output public key (allocated
+*                             array of PQCLEAN_DILITHIUM5_CLEAN_CRYPTO_PUBLICKEYBYTES bytes)
+*              - uint8_t *sk: pointer to output private key (allocated
+*                             array of PQCLEAN_DILITHIUM5_CLEAN_CRYPTO_SECRETKEYBYTES bytes)
+*
+* Returns 0 (success)
+**************************************************/
+int PQCLEAN_DILITHIUM5_CLEAN_crypto_sign_keypair_det(uint8_t *coins, uint8_t *pk, uint8_t *sk) {
     uint8_t seedbuf[2 * SEEDBYTES + CRHBYTES];
     uint8_t tr[TRBYTES];
     const uint8_t *rho, *rhoprime, *key;
     polyvecl mat[K];
     polyvecl s1, s1hat;
     polyveck s2, t1, t0;
+    size_t i;
+
+    /* Copy coins into seedbuf */
+    for (i = 0; i < SEEDBYTES; i++) {
+        seedbuf[i] = coins[i];
+    }
 
     /* Get randomness for rho, rhoprime and key */
     randombytes(seedbuf, SEEDBYTES);

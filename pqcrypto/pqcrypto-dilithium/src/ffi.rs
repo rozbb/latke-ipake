@@ -14,6 +14,10 @@ use libc::c_int;
 #[allow(unused_imports)]
 use pqcrypto_internals::*;
 
+pub const PQCLEAN_DILITHIUM2_COINBYTES: usize = 32;
+pub const PQCLEAN_DILITHIUM3_COINBYTES: usize = 32;
+pub const PQCLEAN_DILITHIUM5_COINBYTES: usize = 32;
+
 pub const PQCLEAN_DILITHIUM2_CLEAN_CRYPTO_SECRETKEYBYTES: usize = 2560;
 pub const PQCLEAN_DILITHIUM2_CLEAN_CRYPTO_PUBLICKEYBYTES: usize = 1312;
 pub const PQCLEAN_DILITHIUM2_CLEAN_CRYPTO_BYTES: usize = 2420;
@@ -293,6 +297,11 @@ extern "C" {
 #[link(name = "dilithium5_clean")]
 extern "C" {
     pub fn PQCLEAN_DILITHIUM5_CLEAN_crypto_sign_keypair(pk: *mut u8, sk: *mut u8) -> c_int;
+    pub fn PQCLEAN_DILITHIUM5_CLEAN_crypto_sign_keypair_det(
+        coins: *const u8,
+        pk: *mut u8,
+        sk: *mut u8,
+    ) -> c_int;
     pub fn PQCLEAN_DILITHIUM5_CLEAN_crypto_sign(
         sm: *mut u8,
         smlen: *mut usize,

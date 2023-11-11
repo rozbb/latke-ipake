@@ -9,6 +9,8 @@
 #define PQCLEAN_DILITHIUM5_CLEAN_CRYPTO_BYTES 4627
 #define PQCLEAN_DILITHIUM5_CLEAN_CRYPTO_ALGNAME "Dilithium5"
 
+int PQCLEAN_DILITHIUM5_CLEAN_crypto_sign_keypair_with_seed(uint8_t *pk, uint8_t *sk);
+
 int PQCLEAN_DILITHIUM5_CLEAN_crypto_sign_keypair(uint8_t *pk, uint8_t *sk);
 
 int PQCLEAN_DILITHIUM5_CLEAN_crypto_sign_signature(uint8_t *sig, size_t *siglen,
