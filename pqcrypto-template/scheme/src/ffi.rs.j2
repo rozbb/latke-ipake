@@ -1,0 +1,370 @@
+//! Foreign function interfaces
+//!
+//! This module defines the foreign function interface for the following
+//! crypto implementations from PQClean:
+//!
+{% for scheme in schemes %}//!  * {{ scheme.name }}
+{% endfor %}
+// This file has been generated from PQClean.
+// Find the templates in pqcrypto-template
+use libc::c_int;
+
+// ensures we link correctly
+#[allow(unused_imports)]
+use pqcrypto_internals::*;
+
+{% for scheme in schemes %}
+{% set metadata = metadatas[scheme.name] %}
+{% for implementation in scheme.implementations %}
+{% set NS_NAME = [scheme.name|namespaceize, implementation|namespaceize]|join('_') %}
+
+{% if implementation == 'avx2' or implementation == 'avx' %}
+#[cfg(enable_x86_avx2)]
+{% elif implementation == 'aesni' %}
+#[cfg(enable_x86_aes)]
+{% elif implementation == 'aarch64' %}
+#[cfg(enable_aarch64_neon)]
+{% endif %}
+{% if insecure %}
+#[deprecated(note = "Insecure cryptography, do not use in production")]
+{% endif %}
+pub const PQCLEAN_{{ NS_NAME }}_CRYPTO_SECRETKEYBYTES: usize = {{ metadata['length-secret-key'] }};
+{% if implementation == 'avx2' or implementation == 'avx' %}
+#[cfg(enable_x86_avx2)]
+{% elif implementation == 'aesni' %}
+#[cfg(enable_x86_aes)]
+{% elif implementation == 'aarch64' %}
+#[cfg(enable_aarch64_neon)]
+{% endif %}
+{% if insecure %}
+#[deprecated(note = "Insecure cryptography, do not use in production")]
+{% endif %}
+pub const PQCLEAN_{{ NS_NAME }}_CRYPTO_PUBLICKEYBYTES: usize = {{ metadata['length-public-key'] }};
+{% if type == "kem" %}
+    {% if implementation == 'avx2' or implementation == 'avx' %}
+    #[cfg(enable_x86_avx2)]
+    {% elif implementation == 'aesni' %}
+    #[cfg(enable_x86_aes)]
+    {% elif implementation == 'aarch64' %}
+    #[cfg(enable_aarch64_neon)]
+    {% endif %}
+    {% if insecure %}
+    #[deprecated(note = "Insecure cryptography, do not use in production")]
+    {% endif %}
+    pub const PQCLEAN_{{ NS_NAME }}_CRYPTO_CIPHERTEXTBYTES: usize = {{ metadata['length-ciphertext'] }};
+    {% if implementation == 'avx2' or implementation == 'avx' %}
+    #[cfg(enable_x86_avx2)]
+    {% elif implementation == 'aesni' %}
+    #[cfg(enable_x86_aes)]
+    {% elif implementation == 'aarch64' %}
+    #[cfg(enable_aarch64_neon)]
+    {% endif %}
+    {% if insecure %}
+    #[deprecated(note = "Insecure cryptography, do not use in production")]
+    {% endif %}
+    pub const PQCLEAN_{{ NS_NAME }}_CRYPTO_BYTES: usize = {{ metadata['length-shared-secret'] }};
+{% else %}
+    {% if implementation == 'avx2' or implementation == 'avx' %}
+    #[cfg(enable_x86_avx2)]
+    {% elif implementation == 'aesni' %}
+    #[cfg(enable_x86_aes)]
+    {% elif implementation == 'aarch64' %}
+    #[cfg(enable_aarch64_neon)]
+    {% endif %}
+    {% if insecure %}
+    #[deprecated(note = "Insecure cryptography, do not use in production")]
+    {% endif %}
+    pub const PQCLEAN_{{ NS_NAME }}_CRYPTO_BYTES: usize = {{ metadata['length-signature'] }};
+{% endif %} {# KEM or SIGN #}
+{% endfor %} {# implementations #}
+{% endfor %} {# schemes #}
+
+
+{% for scheme in schemes %}
+{% for implementation in scheme.implementations %}
+{% set NS_NAME = [scheme.name|namespaceize, implementation|namespaceize]|join('_') %}
+
+{% if implementation == 'avx2' or implementation == 'avx' %}
+#[cfg(enable_x86_avx2)]
+{% elif implementation == 'aesni' %}
+#[cfg(enable_x86_aes)]
+{% elif implementation == 'aarch64' %}
+#[cfg(enable_aarch64_neon)]
+{% endif %}
+#[link(name = "{{ scheme.name }}_{{ implementation }}")]
+extern "C" {
+{% if type == "kem" %}
+    {% if implementation == 'avx2' or implementation == 'avx' %}
+    #[cfg(enable_x86_avx2)]
+    {% elif implementation == 'aesni' %}
+    #[cfg(enable_x86_aes)]
+    {% elif implementation == 'aarch64' %}
+    #[cfg(enable_aarch64_neon)]
+    {% endif %}
+    {% if insecure %}
+    #[deprecated(note = "Insecure cryptography, do not use in production")]
+    {% endif %}
+        pub fn PQCLEAN_{{ NS_NAME }}_crypto_kem_keypair(pk: *mut u8, sk: *mut u8) -> c_int;
+    {% if implementation == 'avx2' or implementation == 'avx' %}
+    #[cfg(enable_x86_avx2)]
+    {% elif implementation == 'aesni' %}
+    #[cfg(enable_x86_aes)]
+    {% elif implementation == 'aarch64' %}
+    #[cfg(enable_aarch64_neon)]
+    {% endif %}
+    {% if insecure %}
+    #[deprecated(note = "Insecure cryptography, do not use in production")]
+    {% endif %}
+        pub fn PQCLEAN_{{ NS_NAME }}_crypto_kem_enc(ct: *mut u8, ss: *mut u8, pk: *const u8) -> c_int;
+    {% if implementation == 'avx2' or implementation == 'avx' %}
+    #[cfg(enable_x86_avx2)]
+    {% elif implementation == 'aesni' %}
+    #[cfg(enable_x86_aes)]
+    {% elif implementation == 'aarch64' %}
+    #[cfg(enable_aarch64_neon)]
+    {% endif %}
+    {% if insecure %}
+    #[deprecated(note = "Insecure cryptography, do not use in production")]
+    {% endif %}
+        pub fn PQCLEAN_{{ NS_NAME }}_crypto_kem_dec(
+            ss: *mut u8,
+            ct: *const u8,
+            sk: *const u8,
+        ) -> c_int;
+{% else %}
+    {% if implementation == 'avx2' or implementation == 'avx' %}
+    #[cfg(enable_x86_avx2)]
+    {% elif implementation == 'aesni' %}
+    #[cfg(enable_x86_aes)]
+    {% elif implementation == 'aarch64' %}
+    #[cfg(enable_aarch64_neon)]
+    {% endif %}
+    {% if insecure %}
+    #[deprecated(note = "Insecure cryptography, do not use in production")]
+    {% endif %}
+        pub fn PQCLEAN_{{ NS_NAME }}_crypto_sign_keypair(pk: *mut u8, sk: *mut u8) -> c_int;
+    {% if implementation == 'avx2' or implementation == 'avx' %}
+    #[cfg(enable_x86_avx2)]
+    {% elif implementation == 'aesni' %}
+    #[cfg(enable_x86_aes)]
+    {% elif implementation == 'aarch64' %}
+    #[cfg(enable_aarch64_neon)]
+    {% endif %}
+    {% if insecure %}
+    #[deprecated(note = "Insecure cryptography, do not use in production")]
+    {% endif %}
+        pub fn PQCLEAN_{{ NS_NAME }}_crypto_sign(sm: *mut u8, smlen: *mut usize, msg: *const u8, len: usize, sk: *const u8) -> c_int;
+    {% if implementation == 'avx2' or implementation == 'avx' %}
+    #[cfg(enable_x86_avx2)]
+    {% elif implementation == 'aesni' %}
+    #[cfg(enable_x86_aes)]
+    {% elif implementation == 'aarch64' %}
+    #[cfg(enable_aarch64_neon)]
+    {% endif %}
+    {% if insecure %}
+    #[deprecated(note = "Insecure cryptography, do not use in production")]
+    {% endif %}
+        pub fn PQCLEAN_{{ NS_NAME }}_crypto_sign_open(m: *mut u8, mlen: *mut usize, sm: *const u8, smlen: usize, pk: *const u8) -> c_int;
+    {% if implementation == 'avx2' or implementation == 'avx' %}
+    #[cfg(enable_x86_avx2)]
+    {% elif implementation == 'aesni' %}
+    #[cfg(enable_x86_aes)]
+    {% elif implementation == 'aarch64' %}
+    #[cfg(enable_aarch64_neon)]
+    {% endif %}
+    {% if insecure %}
+    #[deprecated(note = "Insecure cryptography, do not use in production")]
+    {% endif %}
+        pub fn PQCLEAN_{{ NS_NAME }}_crypto_sign_signature(sig: *mut u8, siglen: *mut usize, m: *const u8, mlen: usize, sk: *const u8) -> c_int;
+    {% if implementation == 'avx2' or implementation == 'avx' %}
+    #[cfg(enable_x86_avx2)]
+    {% elif implementation == 'aesni' %}
+    #[cfg(enable_x86_aes)]
+    {% elif implementation == 'aarch64' %}
+    #[cfg(enable_aarch64_neon)]
+    {% endif %}
+    {% if insecure %}
+    #[deprecated(note = "Insecure cryptography, do not use in production")]
+    {% endif %}
+        pub fn PQCLEAN_{{ NS_NAME }}_crypto_sign_verify(sig: *const u8, siglen: usize, m: *const u8, mlen: usize, pk: *const u8) -> c_int;
+{% endif %}
+}
+{% endfor %} {# implementations #}
+{% endfor %} {# schemes #}
+
+
+{% for scheme in schemes %}
+{% for implementation in scheme.implementations %}
+{% set NS_NAME = [scheme.name|namespaceize, implementation|namespaceize]|join('_') %}
+
+{% if insecure %}
+	{% if implementation == 'avx2' or implementation == 'avx' %}
+	#[cfg(all(test, enable_x86_avx2, feature = "avx2", feature = "cryptographically-insecure"))]
+	{% elif implementation == 'aesni' %}
+	#[cfg(all(test, enable_x86_aes, feature = "aes", feature = "cryptographically-insecure"))]
+	{% elif implementation == 'aarch64' %}
+	#[cfg(all(test, enable_aarch64_neon, feature = "neon", feature = "cryptographically-insecure"))]
+	{% else %}
+	#[cfg(all(test, feature = "cryptographically-insecure"))]
+	{% endif %}
+{% else %}
+	{% if implementation == 'avx2' or implementation == 'avx' %}
+	#[cfg(all(test, enable_x86_avx2, feature = "avx2"))]
+	{% elif implementation == 'aesni' %}
+	#[cfg(all(test, enable_x86_aes, feature = "aes"))]
+	{% elif implementation == 'aarch64' %}
+	#[cfg(all(test, enable_aarch64_neon, feature = "neon"))]
+	{% else %}
+	#[cfg(test)]
+	{% endif %}
+{% endif %}
+mod test_{{ scheme.name|nameize }}_{{ implementation|nameize }} {
+    use super::*;
+    use alloc::vec;
+    {% if implementation == 'avx2' or implementation == 'avx' %}
+    use std::is_x86_feature_detected;
+    {% elif implementation == 'aesni' %}
+    use std::is_x86_feature_detected;
+    {% endif %}
+    {% if type == "sign" %}
+    use alloc::vec::Vec;
+    use rand::prelude::*;
+    {% endif %}
+
+    {% if type == "kem" %}
+    #[test]
+    fn test_ffi() {
+        {% if implementation == 'avx2' or implementation == 'avx' %}
+        if !is_x86_feature_detected!("avx2") {
+            return;
+        }
+        {% elif implementation == 'aesni' %}
+        if !is_x86_feature_detected!("aes") {
+            return;
+        }
+        {% endif %}
+        unsafe {
+            let mut pk = vec![0u8; PQCLEAN_{{ NS_NAME }}_CRYPTO_PUBLICKEYBYTES];
+            let mut sk = vec![0u8; PQCLEAN_{{ NS_NAME }}_CRYPTO_SECRETKEYBYTES];
+            let mut ct = vec![0u8; PQCLEAN_{{ NS_NAME }}_CRYPTO_CIPHERTEXTBYTES];
+            let mut ss1 = vec![0u8; PQCLEAN_{{ NS_NAME }}_CRYPTO_BYTES];
+            let mut ss2 = vec![0u8; PQCLEAN_{{ NS_NAME }}_CRYPTO_BYTES];
+
+            assert_eq!(
+                0,
+                PQCLEAN_{{ NS_NAME }}_crypto_kem_keypair(pk.as_mut_ptr(), sk.as_mut_ptr())
+            );
+            assert_eq!(
+                0,
+                PQCLEAN_{{ NS_NAME }}_crypto_kem_enc(
+                    ct.as_mut_ptr(),
+                    ss1.as_mut_ptr(),
+                    pk.as_ptr()
+                )
+            );
+            assert_eq!(
+                0,
+                PQCLEAN_{{ NS_NAME }}_crypto_kem_dec(ss2.as_mut_ptr(), ct.as_ptr(), sk.as_ptr())
+            );
+            assert_eq!(&ss1[..], &ss2[..], "Shared secrets should be equal");
+        }
+    }
+    {% endif %} {# KEM #}
+
+    {% if type == "sign" %}
+    #[test]
+    fn test_ffi() {
+        {% if implementation == 'avx2' or implementation == 'avx' %}
+        if !is_x86_feature_detected!("avx2") {
+            return;
+        }
+        {% elif implementation == 'aesni' %}
+        if !is_x86_feature_detected!("aes") {
+            return;
+        }
+        {% endif %}
+        unsafe {
+            let mut rng = rand::thread_rng();
+            let mut mlen: usize = rng.gen::<u16>() as usize;
+            let msg: Vec<u8> = (0..mlen).map(|_| rng.gen()).collect();
+
+            let mut pk = vec![0u8; PQCLEAN_{{ NS_NAME }}_CRYPTO_PUBLICKEYBYTES];
+            let mut sk = vec![0u8; PQCLEAN_{{ NS_NAME }}_CRYPTO_SECRETKEYBYTES];
+            let mut pk_alt = vec![0u8; PQCLEAN_{{ NS_NAME }}_CRYPTO_PUBLICKEYBYTES];
+            let mut sk_alt = vec![0u8; PQCLEAN_{{ NS_NAME }}_CRYPTO_SECRETKEYBYTES];
+            let mut detached_sig = vec![0u8; PQCLEAN_{{ NS_NAME }}_CRYPTO_BYTES];
+            let mut sm = Vec::with_capacity(mlen + PQCLEAN_{{ NS_NAME }}_CRYPTO_BYTES);
+            let mut smlen = 0;
+            assert_eq!(
+                0,
+                PQCLEAN_{{ NS_NAME }}_crypto_sign_keypair(pk.as_mut_ptr(), sk.as_mut_ptr())
+            );
+            assert_eq!(
+                0,
+                PQCLEAN_{{ NS_NAME }}_crypto_sign(
+                    sm.as_mut_ptr(), &mut smlen as *mut usize,
+                    msg.as_ptr(), mlen, sk.as_ptr())
+            );
+            sm.set_len(smlen);
+
+            let mut unpacked_m = Vec::with_capacity(mlen + PQCLEAN_{{ NS_NAME }}_CRYPTO_BYTES);
+            assert_eq!(
+                0,
+                PQCLEAN_{{ NS_NAME }}_crypto_sign_open(
+                    unpacked_m.as_mut_ptr(), &mut mlen as *mut usize,
+                    sm.as_ptr(), sm.len(),
+                    pk.as_ptr()
+                )
+            );
+            unpacked_m.set_len(mlen);
+            assert_eq!(unpacked_m, msg);
+
+            // check verification fails with wrong pk
+            assert_eq!(
+                0,
+                PQCLEAN_{{ NS_NAME }}_crypto_sign_keypair(pk_alt.as_mut_ptr(), sk_alt.as_mut_ptr())
+            );
+            assert_eq!(
+                -1,
+                PQCLEAN_{{ NS_NAME }}_crypto_sign_open(
+                    unpacked_m.as_mut_ptr(), &mut mlen as *mut usize,
+                    sm.as_ptr(), sm.len(),
+                    pk_alt.as_ptr()
+                )
+            );
+            assert_eq!(
+                0,
+                PQCLEAN_{{ NS_NAME }}_crypto_sign_signature(
+                    detached_sig.as_mut_ptr(), &mut smlen as *mut usize,
+                    msg.as_ptr(), msg.len(),
+                    sk.as_ptr())
+            );
+            assert!(smlen <= PQCLEAN_{{ NS_NAME }}_CRYPTO_BYTES,
+                    "Signed message length should be ≤ CRYPTO_BYTES");
+            assert_eq!(
+                0,
+                PQCLEAN_{{ NS_NAME }}_crypto_sign_verify(
+                    detached_sig.as_ptr(), smlen,
+                    msg.as_ptr(), msg.len(),
+                    pk.as_ptr())
+            );
+            assert_eq!(
+                -1,
+                PQCLEAN_{{ NS_NAME }}_crypto_sign_verify(
+                    detached_sig.as_ptr(), smlen,
+                    msg.as_ptr(), msg.len(),
+                    pk_alt.as_ptr())
+            );
+            assert_eq!(
+                -1,
+                PQCLEAN_{{ NS_NAME }}_crypto_sign_verify(
+                    detached_sig.as_ptr(), smlen,
+                    msg.as_ptr(), msg.len()-1,
+                    pk.as_ptr())
+            );
+        }
+    }
+    {% endif %} {# SIGN #}
+}
+{% endfor %} {# implementations #}
+{% endfor %} {# schemes #}

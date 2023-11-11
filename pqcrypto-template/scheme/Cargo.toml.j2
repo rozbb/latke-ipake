@@ -1,0 +1,54 @@
+[package]
+name = "pqcrypto-{{ name }}"
+description = "Post-Quantum {% if type == "kem" %}Key-Encapsulation Mechanism{% else %}Signature Scheme{% endif %} {{ name }}"
+readme = "README.md"
+version = "{{ version }}"
+authors = ["Thom Wiggers <thom@thomwiggers.nl>"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/rustpq/"
+repository = "https://github.com/rustpq/pqcrypto/"
+keywords = ["cryptography", "post-quantum", "security"]
+categories = ["cryptography", "no-std"]
+
+[dependencies]
+pqcrypto-internals = { path = "../pqcrypto-internals", version = "0.2" }
+pqcrypto-traits = { path = "../pqcrypto-traits", version = "{{ traits_version }}", default-features = false }
+libc = "0.2.0"
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde-big-array = { version = "0.5.1", optional = true }
+
+[features]
+default = [{% if 'avx2' in implementations or 'avx' in implementations %}"avx2", {% endif %}{% if 'aesni' in implementations %}"aes", {% endif %}{% if 'aarch64' in implementations %}"neon", {% endif %}"std"]
+{% if 'avx2' in implementations or 'avx' in implementations %}
+avx2 = ["std"]
+{% endif %}
+{% if 'aesni' in implementations %}
+aes = ["std"]
+{% endif %}
+{% if 'aarch64' in implementations %}
+neon = ["std"]
+{% endif %}
+std = ["pqcrypto-traits/std"]
+serialization = ["serde", "serde-big-array"]
+{% if insecure %}
+cryptographically-insecure = []
+{% endif %}
+
+[dev-dependencies]
+{% if type == "sign" %}
+rand = "0.8.5"
+{% endif %}
+
+[build-dependencies]
+cc = { version = "1.0", features = ["parallel"] }
+glob = "0.3.0"
+
+[badges]
+travis-ci = { repository = "rustpq/pqcrypto", branch = "master" }
+maintenance = { status = "actively-developed" }
+
+{% if insecure %}
+[package.metadata.docs.rs]
+features = ["cryptographically-insecure"]
+{% endif %}
