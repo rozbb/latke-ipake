@@ -64,7 +64,7 @@ impl Mul for Poly {
         for i in 0..N {
             // These limbs do not pass the ring's degree
             for j in 0..N - i {
-                c[(i + j)] += a[i] * b[j];
+                c[i + j] += a[i] * b[j];
             }
 
             // These limbs pass the ring's degree and must be reduced modulo x^256 + 1

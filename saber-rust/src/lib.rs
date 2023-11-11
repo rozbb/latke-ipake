@@ -110,9 +110,9 @@ mod non_generic;
 mod generic;
 mod poly;
 
-pub mod saber;
-pub mod lightsaber;
 pub mod firesaber;
+pub mod lightsaber;
+pub mod saber;
 
 /// Error type for the [saber crate].
 ///
