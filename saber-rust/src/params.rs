@@ -33,7 +33,7 @@ macro_rules! __generate_params {
 
         const POLYVECCOMPRESSEDBYTES: usize =
             K * (crate::params::N * crate::params::EPS_P as usize) / 8;
-        const INDCPA_PUBLICKEYBYTES: usize = POLYVECCOMPRESSEDBYTES + crate::params::SEEDBYTES;
+        pub const INDCPA_PUBLICKEYBYTES: usize = POLYVECCOMPRESSEDBYTES + crate::params::SEEDBYTES;
         const INDCPA_SECRETKEYBYTES: usize =
             K * crate::params::EPS_Q as usize * crate::params::N / 8;
 

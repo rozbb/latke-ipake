@@ -7,6 +7,7 @@ use rand_core::RngCore;
 use saber::firesaber::{
     decapsulate_ind_cpa as kem_decap, encapsulate_ind_cpa as kem_encap,
     keygen_ind_cpa as kem_keygen, Ciphertext, INDCPAPublicKey, INDCPASecretKey,
+    INDCPA_PUBLICKEYBYTES,
 };
 use sha2::{Digest, Sha256};
 
@@ -19,6 +20,7 @@ type Ssid = [u8; 2 * NONCE_BYTELEN];
 type SessionKey = [u8; 32];
 type AuthKey = [u8; 32];
 type AuthTag = [u8; 32];
+type EncryptedPubkey = [u8; INDCPA_PUBLICKEYBYTES];
 
 #[derive(Debug, PartialEq, Eq)]
 enum InitiatorState {
@@ -91,6 +93,7 @@ fn lioness_decrypt(
 #[derive(Default)]
 struct CakeInitiator {
     state: InitiatorState,
+    password: Vec<u8>,
     nonce1: Nonce,
     ssid: Ssid,
     eph_pk: Option<INDCPAPublicKey>,
@@ -102,6 +105,7 @@ struct CakeInitiator {
 #[derive(Default)]
 struct CakeResponder {
     state: ResponderState,
+    password: Vec<u8>,
     nonce1: Nonce,
     eph_pk: Option<INDCPAPublicKey>,
     ciphertext: Ciphertext,
@@ -111,6 +115,13 @@ struct CakeResponder {
 }
 
 impl CakeResponder {
+    pub fn new(password: &[u8]) -> CakeResponder {
+        CakeResponder {
+            password: password.to_vec(),
+            ..Default::default()
+        }
+    }
+
     pub fn get_sess_key(&self) -> SessionKey {
         assert_eq!(self.state, ResponderState::RecvdStep3);
         self.sess_key
@@ -136,11 +147,17 @@ impl CakeResponder {
         nonce2
     }
 
-    fn step1_rx(&mut self, eph_pk: &INDCPAPublicKey) {
+    fn step1_rx(&mut self, enc_eph_pk: &EncryptedPubkey) {
         assert_eq!(self.state, ResponderState::SentNonce2);
         self.state = ResponderState::RecvdStep1;
 
-        self.eph_pk = Some(eph_pk.clone());
+        // Decrypt the ephemeral pubkey
+        let mut eph_pk = [0u8; INDCPA_PUBLICKEYBYTES];
+        eph_pk.copy_from_slice(enc_eph_pk);
+        let domain_sep = 0u8;
+        lioness_decrypt(domain_sep, &self.ssid, &self.password, &mut eph_pk).unwrap();
+        let eph_pk = INDCPAPublicKey::from_bytes(&eph_pk);
+        self.eph_pk = Some(eph_pk);
     }
 
     fn step2_tx(&mut self) -> (Ciphertext, AuthTag) {
@@ -199,6 +216,13 @@ impl CakeResponder {
 }
 
 impl CakeInitiator {
+    pub fn new(password: &[u8]) -> CakeInitiator {
+        CakeInitiator {
+            password: password.to_vec(),
+            ..Default::default()
+        }
+    }
+
     pub fn get_sess_key(&self) -> SessionKey {
         assert_eq!(self.state, InitiatorState::SentStep3);
         self.sess_key
@@ -224,16 +248,22 @@ impl CakeInitiator {
     }
 
     /// Send an ephemeral pubkey
-    fn step1_tx(&mut self) -> INDCPAPublicKey {
+    fn step1_tx(&mut self) -> EncryptedPubkey {
         assert_eq!(self.state, InitiatorState::RecvdNonce2);
         self.state = InitiatorState::SentStep1;
 
         // Generate the keypair
-        let (pk, sk) = kem_keygen();
+        let (mut pk, sk) = kem_keygen();
         self.eph_pk = Some(pk.clone());
         self.eph_sk = Some(sk);
 
-        pk
+        // Now encrypt pk with the password and SSID
+        let mut encrypted_pk = [0u8; INDCPA_PUBLICKEYBYTES];
+        encrypted_pk.copy_from_slice(pk.to_bytes().as_bytes());
+        let domain_sep = 0u8;
+        lioness_encrypt(domain_sep, &self.ssid, &self.password, &mut encrypted_pk).unwrap();
+
+        encrypted_pk
     }
 
     /// Receives a ciphertext and derives the shared secret
@@ -294,9 +324,10 @@ mod test {
     #[test]
     fn cake_correctness() {
         let mut rng = thread_rng();
+        let password = b"hello world";
 
-        let mut initiator = CakeInitiator::default();
-        let mut responder = CakeResponder::default();
+        let mut initiator = CakeInitiator::new(password);
+        let mut responder = CakeResponder::new(password);
 
         let nonce1 = initiator.nonce1_tx(&mut rng);
         responder.nonce1_rx(&nonce1);
