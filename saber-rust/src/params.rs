@@ -43,7 +43,7 @@ macro_rules! __generate_params {
             + INDCPA_PUBLICKEYBYTES
             + crate::params::HASHBYTES
             + crate::params::KEYBYTES;
-        const BYTES_CCA_DEC: usize = POLYVECCOMPRESSEDBYTES + RECONBYTES_KEM;
+        pub const BYTES_CCA_DEC: usize = POLYVECCOMPRESSEDBYTES + RECONBYTES_KEM;
 
         /// Is called DELTA in the reference implemention
         const RECONBYTES_KEM: usize = (RECON_SIZE + 1) * crate::params::N / 8;

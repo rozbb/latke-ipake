@@ -4,10 +4,13 @@ use hkdf::{
 };
 use lioness::{LionessDefault, LionessError, RAW_KEY_SIZE as LIONESS_KEY_SIZE};
 use rand_core::RngCore;
-use saber::firesaber::{
-    decapsulate_ind_cpa as kem_decap, encapsulate_ind_cpa as kem_encap,
-    keygen_ind_cpa as kem_keygen, Ciphertext, INDCPAPublicKey, INDCPASecretKey,
-    INDCPA_PUBLICKEYBYTES,
+use saber::{
+    firesaber::{
+        decapsulate_ind_cpa as kem_decap, encapsulate_ind_cpa as kem_encap,
+        keygen_ind_cpa as kem_keygen, Ciphertext as EncappedKey, INDCPAPublicKey, INDCPASecretKey,
+        BYTES_CCA_DEC, INDCPA_PUBLICKEYBYTES,
+    },
+    Error as SaberError,
 };
 use sha2::{Digest, Sha256};
 
@@ -21,6 +24,25 @@ type SessionKey = [u8; 32];
 type AuthKey = [u8; 32];
 type AuthTag = [u8; 32];
 type EncryptedPubkey = [u8; INDCPA_PUBLICKEYBYTES];
+type EncryptedEncappedKey = [u8; BYTES_CCA_DEC];
+
+#[derive(Debug)]
+enum CakeError {
+    Mac(MacError),
+    Saber(SaberError),
+}
+
+impl From<MacError> for CakeError {
+    fn from(e: MacError) -> Self {
+        CakeError::Mac(e)
+    }
+}
+
+impl From<SaberError> for CakeError {
+    fn from(e: SaberError) -> Self {
+        CakeError::Saber(e)
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 enum InitiatorState {
@@ -108,7 +130,7 @@ struct CakeResponder {
     password: Vec<u8>,
     nonce1: Nonce,
     eph_pk: Option<INDCPAPublicKey>,
-    ciphertext: Ciphertext,
+    encapped_key: EncappedKey,
     ssid: Ssid,
     sess_key: SessionKey,
     auth_key: AuthKey,
@@ -160,11 +182,23 @@ impl CakeResponder {
         self.eph_pk = Some(eph_pk);
     }
 
-    fn step2_tx(&mut self) -> (Ciphertext, AuthTag) {
+    fn step2_tx(&mut self) -> (EncryptedEncappedKey, AuthTag) {
         assert_eq!(self.state, ResponderState::RecvdStep1);
         self.state = ResponderState::SentStep2;
 
-        let (shared_secret, ct) = kem_encap(self.eph_pk.as_ref().unwrap());
+        let (shared_secret, encapped_key) = kem_encap(self.eph_pk.as_ref().unwrap());
+
+        // Encrypt the encapsulated key
+        let mut enc_encapped_key = [0u8; BYTES_CCA_DEC];
+        enc_encapped_key.copy_from_slice(encapped_key.as_bytes());
+        let domain_sep = 1u8;
+        lioness_encrypt(
+            domain_sep,
+            &self.ssid,
+            &self.password,
+            &mut enc_encapped_key,
+        )
+        .unwrap();
 
         // Start the HKDF over the shared secret. We're gonna take two hashes
         let hk = Hkdf::<Sha256>::from_prk(shared_secret.as_slice()).unwrap();
@@ -175,13 +209,13 @@ impl CakeResponder {
             b"sess_key",
             &self.ssid[..],
             &eph_pk_bytes.as_bytes()[..],
-            &ct.as_bytes()[..],
+            &enc_encapped_key,
         ];
         let auth_key_ctx = &[
             b"auth_key",
             &self.ssid[..],
             &eph_pk_bytes.as_bytes()[..],
-            &ct.as_bytes()[..],
+            &enc_encapped_key,
         ];
 
         // Set the session key
@@ -198,7 +232,7 @@ impl CakeResponder {
             hm.finalize()
         };
 
-        (ct, auth_tag.into_bytes().into())
+        (enc_encapped_key, auth_tag.into_bytes().into())
     }
 
     fn step3_rx(&mut self, auth_tag1: &AuthTag) -> Result<(), MacError> {
@@ -266,11 +300,23 @@ impl CakeInitiator {
         encrypted_pk
     }
 
-    /// Receives a ciphertext and derives the shared secret
-    fn step2_rx(&mut self, ct: &Ciphertext, auth_tag2: &AuthTag) -> Result<(), MacError> {
+    /// Receives an encapsulated key and derives the shared secret
+    fn step2_rx(
+        &mut self,
+        enc_encapped_key: &EncryptedEncappedKey,
+        auth_tag2: &AuthTag,
+    ) -> Result<(), CakeError> {
         assert_eq!(self.state, InitiatorState::SentStep1);
 
-        let shared_secret = kem_decap(ct, self.eph_sk.as_ref().unwrap());
+        // Decrypt the encapsulated key
+        let mut encapped_key = [0u8; BYTES_CCA_DEC];
+        encapped_key.copy_from_slice(enc_encapped_key);
+        let domain_sep = 1u8;
+        lioness_decrypt(domain_sep, &self.ssid, &self.password, &mut encapped_key).unwrap();
+        let encapped_key = EncappedKey::from_bytes(&encapped_key)?;
+
+        // Decapsulate
+        let shared_secret = kem_decap(&encapped_key, self.eph_sk.as_ref().unwrap());
 
         let hk = Hkdf::<Sha256>::from_prk(shared_secret.as_slice()).unwrap();
 
@@ -280,13 +326,13 @@ impl CakeInitiator {
             b"sess_key",
             &self.ssid[..],
             &eph_pk_bytes.as_bytes()[..],
-            &ct.as_bytes()[..],
+            &enc_encapped_key[..],
         ];
         let auth_key_ctx = &[
             b"auth_key",
             &self.ssid[..],
             &eph_pk_bytes.as_bytes()[..],
-            &ct.as_bytes()[..],
+            &enc_encapped_key[..],
         ];
 
         // Set the session key
