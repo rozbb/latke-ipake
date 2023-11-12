@@ -1,3 +1,4 @@
+use crate::generic;
 macro_rules! __generate_non_generic_impl {
     ($struct:ident) => {
         /// A saber public key
@@ -156,8 +157,24 @@ macro_rules! __generate_non_generic_impl {
             }
         }
 
+        impl INDCPAPublicKey {
+            pub fn to_bytes(&self) -> INDCPAPublicKeyBytes {
+                <INDCPAPublicKey as generic::INDCPAPublicKey<$struct>>::to_bytes(&self)
+            }
+
+            pub fn from_bytes(bytes: &[u8]) -> INDCPAPublicKey {
+                generic::INDCPAPublicKey::from_bytes(bytes)
+            }
+        }
+
+        impl From<&INDCPAPublicKeyBytes> for INDCPAPublicKey {
+            fn from(bytes: &INDCPAPublicKeyBytes) -> INDCPAPublicKey {
+                <INDCPAPublicKey as generic::INDCPAPublicKey<$struct>>::from_bytes(&bytes.0)
+            }
+        }
+
         __byte_array_newtype!(
-            INDCPAPublicKeyBytes,
+            pub INDCPAPublicKeyBytes,
             INDCPA_PUBLICKEYBYTES,
             [u8; INDCPA_PUBLICKEYBYTES]
         );
