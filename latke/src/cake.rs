@@ -1,6 +1,10 @@
+use blake2::{Blake2b, Blake2s256};
 use hkdf::{
-    hmac::{digest::MacError, Hmac, Mac},
-    Hkdf,
+    hmac::{
+        digest::{consts::U32, Digest, Mac, MacError},
+        Hmac, SimpleHmac,
+    },
+    Hkdf, SimpleHkdf,
 };
 use lioness::{LionessDefault, LionessError, RAW_KEY_SIZE as LIONESS_KEY_SIZE};
 use rand_core::RngCore;
@@ -12,7 +16,11 @@ use saber::{
     },
     Error as SaberError,
 };
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
+
+type MyHash = Blake2b<U32>;
+type MyKdf = SimpleHkdf<MyHash>;
+type MyMac = SimpleHmac<MyHash>;
 
 const NONCE_BYTELEN: usize = 16;
 const INITIATOR_AUTH_STR: &[u8] = b"initiator";
@@ -27,7 +35,7 @@ type EncryptedPubkey = [u8; INDCPA_PUBLICKEYBYTES];
 type EncryptedEncappedKey = [u8; BYTES_CCA_DEC];
 
 #[derive(Debug)]
-enum CakeError {
+pub enum CakeError {
     Mac(MacError),
     Saber(SaberError),
 }
@@ -76,6 +84,8 @@ impl Default for ResponderState {
     }
 }
 
+/// Encrypts the payload using the LIONESS keyed permutation algorithm. This is modeled as an ideal
+/// cipher in the paper.
 fn lioness_encrypt(
     domain_sep: u8,
     ssid: &[u8],
@@ -86,7 +96,7 @@ fn lioness_encrypt(
 
     // KDF the domain separator, ssid, and password into a key of the appropriate length
     let password_hash = Sha256::digest(password);
-    let hk = Hkdf::<Sha256>::from_prk(&password_hash).unwrap();
+    let hk = MyKdf::from_prk(&password_hash).unwrap();
     hk.expand_multi_info(&[&[domain_sep], ssid], &mut lioness_key)
         .unwrap();
 
@@ -94,6 +104,8 @@ fn lioness_encrypt(
     cipher.encrypt(payload)
 }
 
+/// Decrypts the payload using the LIONESS keyed permutation algorithm. This is modeled as an ideal
+/// cipher in the paper.
 fn lioness_decrypt(
     domain_sep: u8,
     ssid: &[u8],
@@ -104,7 +116,7 @@ fn lioness_decrypt(
 
     // KDF the domain separator, ssid, and password into a key of the appropriate length
     let password_hash = Sha256::digest(password);
-    let hk = Hkdf::<Sha256>::from_prk(&password_hash).unwrap();
+    let hk = MyKdf::from_prk(&password_hash).unwrap();
     hk.expand_multi_info(&[&[domain_sep], ssid], &mut lioness_key)
         .unwrap();
 
@@ -113,7 +125,7 @@ fn lioness_decrypt(
 }
 
 #[derive(Default)]
-struct CakeInitiator {
+pub struct CakeInitiator {
     state: InitiatorState,
     password: Vec<u8>,
     nonce1: Nonce,
@@ -125,7 +137,7 @@ struct CakeInitiator {
 }
 
 #[derive(Default)]
-struct CakeResponder {
+pub struct CakeResponder {
     state: ResponderState,
     password: Vec<u8>,
     nonce1: Nonce,
@@ -149,14 +161,14 @@ impl CakeResponder {
         self.sess_key
     }
 
-    fn nonce1_rx(&mut self, nonce1: &Nonce) {
+    pub fn nonce1_rx(&mut self, nonce1: &Nonce) {
         assert_eq!(self.state, ResponderState::Initialized);
         self.state = ResponderState::RecvdNonce1;
 
         self.nonce1 = *nonce1;
     }
 
-    fn nonce2_tx(&mut self, mut rng: impl RngCore) -> Nonce {
+    pub fn nonce2_tx(&mut self, mut rng: impl RngCore) -> Nonce {
         assert_eq!(self.state, ResponderState::RecvdNonce1);
         self.state = ResponderState::SentNonce2;
 
@@ -169,7 +181,7 @@ impl CakeResponder {
         nonce2
     }
 
-    fn step1_rx(&mut self, enc_eph_pk: &EncryptedPubkey) {
+    pub fn step1_rx(&mut self, enc_eph_pk: &EncryptedPubkey) {
         assert_eq!(self.state, ResponderState::SentNonce2);
         self.state = ResponderState::RecvdStep1;
 
@@ -182,7 +194,7 @@ impl CakeResponder {
         self.eph_pk = Some(eph_pk);
     }
 
-    fn step2_tx(&mut self) -> (EncryptedEncappedKey, AuthTag) {
+    pub fn step2_tx(&mut self) -> (EncryptedEncappedKey, AuthTag) {
         assert_eq!(self.state, ResponderState::RecvdStep1);
         self.state = ResponderState::SentStep2;
 
@@ -200,8 +212,8 @@ impl CakeResponder {
         )
         .unwrap();
 
-        // Start the HKDF over the shared secret. We're gonna take two hashes
-        let hk = Hkdf::<Sha256>::from_prk(shared_secret.as_slice()).unwrap();
+        // Start the KDF over the shared secret. We're gonna take two hashes
+        let hk = MyKdf::from_prk(shared_secret.as_slice()).unwrap();
 
         // Domain-separate our hashes
         let eph_pk_bytes = self.eph_pk.as_ref().unwrap().to_bytes();
@@ -227,7 +239,7 @@ impl CakeResponder {
 
         // Compute the auth tag
         let auth_tag = {
-            let mut hm = Hmac::<Sha256>::new_from_slice(&self.auth_key).unwrap();
+            let mut hm = MyMac::new_from_slice(&self.auth_key).unwrap();
             hm.update(RESPONDER_AUTH_STR);
             hm.finalize()
         };
@@ -235,11 +247,11 @@ impl CakeResponder {
         (enc_encapped_key, auth_tag.into_bytes().into())
     }
 
-    fn step3_rx(&mut self, auth_tag1: &AuthTag) -> Result<(), MacError> {
+    pub fn step3_rx(&mut self, auth_tag1: &AuthTag) -> Result<(), MacError> {
         assert_eq!(self.state, ResponderState::SentStep2);
 
         // Verify the incoming auth tag
-        let mut hm = Hmac::<Sha256>::new_from_slice(&self.auth_key).unwrap();
+        let mut hm = MyMac::new_from_slice(&self.auth_key).unwrap();
         hm.update(INITIATOR_AUTH_STR);
         hm.verify_slice(auth_tag1)?;
 
@@ -263,7 +275,7 @@ impl CakeInitiator {
     }
 
     /// Sends the nonce
-    fn nonce1_tx(&mut self, mut rng: impl RngCore) -> Nonce {
+    pub fn nonce1_tx(&mut self, mut rng: impl RngCore) -> Nonce {
         assert_eq!(self.state, InitiatorState::Initialized);
         self.state = InitiatorState::SentNonce1;
 
@@ -272,7 +284,7 @@ impl CakeInitiator {
     }
 
     /// Receives a nonce, thus establishing the ssid
-    fn nonce2_rx(&mut self, nonce2: &Nonce) {
+    pub fn nonce2_rx(&mut self, nonce2: &Nonce) {
         assert_eq!(self.state, InitiatorState::SentNonce1);
         self.state = InitiatorState::RecvdNonce2;
 
@@ -282,7 +294,7 @@ impl CakeInitiator {
     }
 
     /// Send an ephemeral pubkey
-    fn step1_tx(&mut self) -> EncryptedPubkey {
+    pub fn step1_tx(&mut self) -> EncryptedPubkey {
         assert_eq!(self.state, InitiatorState::RecvdNonce2);
         self.state = InitiatorState::SentStep1;
 
@@ -301,7 +313,7 @@ impl CakeInitiator {
     }
 
     /// Receives an encapsulated key and derives the shared secret
-    fn step2_rx(
+    pub fn step2_rx(
         &mut self,
         enc_encapped_key: &EncryptedEncappedKey,
         auth_tag2: &AuthTag,
@@ -318,7 +330,8 @@ impl CakeInitiator {
         // Decapsulate
         let shared_secret = kem_decap(&encapped_key, self.eph_sk.as_ref().unwrap());
 
-        let hk = Hkdf::<Sha256>::from_prk(shared_secret.as_slice()).unwrap();
+        // Start the KDF over the shared secret. We're gonna take two hashes
+        let hk = MyKdf::from_prk(shared_secret.as_slice()).unwrap();
 
         // Domain-separate our hashes
         let eph_pk_bytes = self.eph_pk.as_ref().unwrap().to_bytes();
@@ -343,7 +356,7 @@ impl CakeInitiator {
             .unwrap();
 
         // Verify the incoming auth tag
-        let mut hm = Hmac::<Sha256>::new_from_slice(&self.auth_key).unwrap();
+        let mut hm = MyMac::new_from_slice(&self.auth_key).unwrap();
         hm.update(RESPONDER_AUTH_STR);
         hm.verify_slice(auth_tag2)?;
 
@@ -352,11 +365,11 @@ impl CakeInitiator {
     }
 
     /// Sends an auth tag
-    fn step3_tx(&mut self) -> AuthTag {
+    pub fn step3_tx(&mut self) -> AuthTag {
         assert_eq!(self.state, InitiatorState::RecvdStep2);
         self.state = InitiatorState::SentStep3;
 
-        let mut hm = Hmac::<Sha256>::new_from_slice(&self.auth_key).unwrap();
+        let mut hm = MyMac::new_from_slice(&self.auth_key).unwrap();
         hm.update(INITIATOR_AUTH_STR);
         hm.finalize().into_bytes().into()
     }

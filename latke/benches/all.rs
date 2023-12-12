@@ -1,4 +1,7 @@
+use latke::cake::{CakeInitiator, CakeResponder};
+
 use criterion::{criterion_group, criterion_main, Criterion};
+use rand::thread_rng;
 use saber::firesaber::{
     decapsulate as kem_decap, decapsulate_ind_cpa as kem_decap_ind_cpa, encapsulate as kem_encap,
     encapsulate_ind_cpa as kem_encap_ind_cpa, keygen as kem_keygen,
@@ -52,5 +55,28 @@ fn bench_ind_cpa_kem(c: &mut Criterion) {
     assert_eq!(client_secret.as_slice(), server_secret.as_slice());
 }
 
-criterion_group!(benches, bench_ind_cpa_kem, bench_kem);
+fn bench_pake(c: &mut Criterion) {
+    let mut rng = thread_rng();
+    let password = b"hello world";
+
+    c.bench_function("CAKE e2e", |b| {
+        b.iter(|| {
+            let mut initiator = CakeInitiator::new(password);
+            let mut responder = CakeResponder::new(password);
+
+            let nonce1 = initiator.nonce1_tx(&mut rng);
+            responder.nonce1_rx(&nonce1);
+            let nonce2 = responder.nonce2_tx(&mut rng);
+            initiator.nonce2_rx(&nonce2);
+            let eph_pk = initiator.step1_tx();
+            responder.step1_rx(&eph_pk);
+            let (ct, auth_tag2) = responder.step2_tx();
+            initiator.step2_rx(&ct, &auth_tag2).unwrap();
+            let auth_tag1 = initiator.step3_tx();
+            responder.step3_rx(&auth_tag1).unwrap();
+        })
+    });
+}
+
+criterion_group!(benches, /*bench_ind_cpa_kem, bench_kem,*/ bench_pake);
 criterion_main!(benches);
