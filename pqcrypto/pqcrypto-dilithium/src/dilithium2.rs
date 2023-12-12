@@ -170,6 +170,27 @@ pub const fn signature_bytes() -> usize {
     ffi::PQCLEAN_DILITHIUM2_CLEAN_CRYPTO_BYTES
 }
 
+/// The random coins used for key generation
+pub type KeygenCoins = [u8; ffi::PQCLEAN_DILITHIUM2_COINBYTES];
+
+/// Generate a dilithium2 keypair using the given random coins
+pub fn keypair_det(coins: KeygenCoins) -> (PublicKey, SecretKey) {
+    let mut pk = PublicKey::new();
+    let mut sk = SecretKey::new();
+    assert_eq!(
+        unsafe {
+            ffi::PQCLEAN_DILITHIUM2_CLEAN_crypto_sign_keypair_det(
+                coins.as_ptr(),
+                pk.0.as_mut_ptr(),
+                sk.0.as_mut_ptr(),
+            )
+        },
+        0
+    );
+
+    (pk, sk)
+}
+
 macro_rules! gen_keypair {
     ($variant:ident) => {{
         let mut pk = PublicKey::new();

@@ -1,6 +1,7 @@
-use pqcrypto_dilithium::dilithium5::{
-    keypair as gen_sig_keypair, PublicKey as SigPubkey, SecretKey as SigPrivkey,
+use pqcrypto_dilithium::dilithium2::{
+    keypair_det as gen_sig_keypair, KeygenCoins, PublicKey as SigPubkey, SecretKey as SigPrivkey,
 };
+use rand::Rng;
 
 struct AkeInitiator {
     upk: SigPubkey,
@@ -9,7 +10,9 @@ struct AkeInitiator {
 
 impl Default for AkeInitiator {
     fn default() -> Self {
-        let (upk, usk) = gen_sig_keypair();
+        let mut rng = rand::thread_rng();
+        let coins: KeygenCoins = rng.gen();
+        let (upk, usk) = gen_sig_keypair(coins);
         AkeInitiator { upk, usk }
     }
 }

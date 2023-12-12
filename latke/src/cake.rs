@@ -9,7 +9,7 @@ use hkdf::{
 use lioness::{LionessDefault, LionessError, RAW_KEY_SIZE as LIONESS_KEY_SIZE};
 use rand_core::RngCore;
 use saber::{
-    firesaber::{
+    lightsaber::{
         decapsulate_ind_cpa as kem_decap, encapsulate_ind_cpa as kem_encap,
         keygen_ind_cpa as kem_keygen, Ciphertext as EncappedKey, INDCPAPublicKey, INDCPASecretKey,
         BYTES_CCA_DEC, INDCPA_PUBLICKEYBYTES,

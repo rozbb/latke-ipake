@@ -202,25 +202,11 @@ pub fn keypair() -> (PublicKey, SecretKey) {
     gen_keypair!(PQCLEAN_DILITHIUM5_CLEAN_crypto_sign_keypair)
 }
 
-/// Generate a dilithium5 keypair
-pub fn keypair_det(coins: [u8; ffi::PQCLEAN_DILITHIUM5_COINBYTES]) -> (PublicKey, SecretKey) {
-    /*
-    #[cfg(all(enable_x86_avx2, feature = "avx2"))]
-    {
-        if std::is_x86_feature_detected!("avx2") {
-            return gen_keypair!(PQCLEAN_DILITHIUM5_AVX2_crypto_sign_keypair);
-        }
-    }
-    #[cfg(all(enable_aarch64_neon, feature = "neon"))]
-    {
-        // always use AArch64 code, when target is detected as all AArch64 targets have NEON
-        // support, and std::is_aarch64_feature_detected!("neon") works only with Rust nightly at
-        // the moment
-        if true {
-            return gen_keypair!(PQCLEAN_DILITHIUM5_AARCH64_crypto_sign_keypair);
-        }
-    }
-    */
+/// The random coins used for key generation
+pub type KeygenCoins = [u8; ffi::PQCLEAN_DILITHIUM5_COINBYTES];
+
+/// Generate a dilithium5 keypair using the given random coins
+pub fn keypair_det(coins: KeygenCoins) -> (PublicKey, SecretKey) {
     let mut pk = PublicKey::new();
     let mut sk = SecretKey::new();
     assert_eq!(

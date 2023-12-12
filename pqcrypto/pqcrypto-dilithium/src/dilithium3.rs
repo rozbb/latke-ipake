@@ -202,6 +202,27 @@ pub fn keypair() -> (PublicKey, SecretKey) {
     gen_keypair!(PQCLEAN_DILITHIUM3_CLEAN_crypto_sign_keypair)
 }
 
+/// The random coins used for key generation
+pub type KeygenCoins = [u8; ffi::PQCLEAN_DILITHIUM3_COINBYTES];
+
+/// Generate a dilithium3 keypair using the given random coins
+pub fn keypair_det(coins: KeygenCoins) -> (PublicKey, SecretKey) {
+    let mut pk = PublicKey::new();
+    let mut sk = SecretKey::new();
+    assert_eq!(
+        unsafe {
+            ffi::PQCLEAN_DILITHIUM3_CLEAN_crypto_sign_keypair_det(
+                coins.as_ptr(),
+                pk.0.as_mut_ptr(),
+                sk.0.as_mut_ptr(),
+            )
+        },
+        0
+    );
+
+    (pk, sk)
+}
+
 macro_rules! gen_signature {
     ($variant:ident, $msg:ident, $sk:ident) => {{
         let max_len = $msg.len() + signature_bytes();
