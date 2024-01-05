@@ -13,6 +13,7 @@ lioness = "0.1.2"
 blake2 = "0.10"
 generic-array = "1.0.0"
 rand = "0.8"
+curve25519-dalek = { version = "4.1.1", features = ["rand_core", "digest"] }
 
 [dev-dependencies]
 criterion = "0.3"

@@ -1,4 +1,4 @@
-use blake2::{Blake2b, Blake2s256};
+use blake2::Blake2b;
 use hkdf::{
     hmac::{
         digest::{consts::U32, Digest, Mac, MacError},
