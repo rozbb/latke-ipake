@@ -48,40 +48,44 @@ enum Role {
 }
 
 // The protocol is perfectly symmetric, so we can use the same struct for both roles.
-struct Executor {
+struct Executor<R: RngCore + CryptoRng> {
+    // The IBKE portion
     pwfile: PwFile,
     ssid: Ssid,
     other_id: Id,
     role: Role,
     r: Scalar,
 
-    // The transcript of every message sent
+    // The PAKE portion
+    pake_state: Option<Spake2<Ed25519Group>>,
+    key: Option<SessKey>,
+
+    /// The transcript of every message sent
     tr_sent: Vec<Vec<u8>>,
-    // The transcript of every message received
+    /// The transcript of every message received
     tr_recv: Vec<Vec<u8>>,
+    /// The RNG for this session
+    rng: R,
 }
 
-impl Executor {
-    fn new<R: RngCore + CryptoRng>(
-        mut rng: R,
-        pwfile: PwFile,
-        ssid: Ssid,
-        other_id: Id,
-        role: Role,
-    ) -> Self {
+impl<R: RngCore + CryptoRng> Executor<R> {
+    fn new(mut rng: R, pwfile: PwFile, ssid: Ssid, other_id: Id, role: Role) -> Self {
         Executor {
             pwfile,
             ssid,
             other_id,
             role,
             r: Scalar::random(&mut rng),
+            pake_state: None,
+            key: None,
             tr_sent: Vec::new(),
             tr_recv: Vec::new(),
+            rng,
         }
     }
 
-    fn round_1<R: RngCore + CryptoRng>(&mut self, mut rng: R) -> Vec<u8> {
-        self.r = Scalar::random(&mut rng);
+    fn round_1(&mut self) -> Vec<u8> {
+        self.r = Scalar::random(&mut self.rng);
         let R = RistrettoPoint::mul_base(&self.r);
 
         // Send X, R
@@ -139,27 +143,55 @@ impl Executor {
         .concat();
 
         pake_input
-
-        //todo!()
     }
 
-    fn step_1<R: RngCore + CryptoRng>(&mut self, mut rng: R) -> Vec<u8> {
-        self.round_1(rng)
+    fn step_1(&mut self) -> Vec<u8> {
+        self.round_1()
     }
 
-    fn step_2<R: RngCore + CryptoRng>(&mut self, mut rng: R, msg: &[u8]) -> Vec<u8> {
+    fn step_2(&mut self, msg: &[u8]) -> Vec<u8> {
         self.tr_recv.push(msg.to_vec());
-        self.round_1(rng)
+        self.round_1()
     }
 
     fn step_3(&mut self, msg: &[u8]) -> Vec<u8> {
         self.tr_recv.push(msg.to_vec());
-        self.round_2(msg)
+        let ibke_out = self.round_2(msg);
+
+        let (pake_state, pake_msg) = Spake2::<Ed25519Group>::start_symmetric_with_rng(
+            &Password::new(ibke_out),
+            &Identity::new(b"shared id"),
+            &mut self.rng,
+        );
+        self.pake_state = Some(pake_state);
+
+        pake_msg
     }
 
-    fn step_4(&mut self) -> Vec<u8> {
+    fn step_4(&mut self, msg: &[u8]) -> Vec<u8> {
         let last_msg = self.tr_recv.last().cloned().unwrap();
-        self.round_2(&last_msg)
+        let ibke_out = self.round_2(&last_msg);
+
+        let (pake_state, pake_msg) = Spake2::<Ed25519Group>::start_symmetric_with_rng(
+            &Password::new(ibke_out),
+            &Identity::new(b"shared id"),
+            &mut self.rng,
+        );
+        let output_key = pake_state.finish(&msg).unwrap().try_into().unwrap();
+        self.key = Some(output_key);
+
+        pake_msg
+    }
+
+    fn step_5(&mut self, msg: &[u8]) {
+        let pake_state: Spake2<Ed25519Group> =
+            core::mem::replace(&mut self.pake_state, None).unwrap();
+        let output_key = pake_state.finish(&msg).unwrap().try_into().unwrap();
+        self.key = Some(output_key);
+    }
+
+    fn finalize(&self) -> SessKey {
+        self.key.unwrap()
     }
 }
 
@@ -182,14 +214,15 @@ mod test {
         let pwfile1 = PwFile::new(&mut rng, pw.to_vec(), id1);
         let pwfile2 = PwFile::new(&mut rng, pw.to_vec(), id2);
 
-        let mut user1 = Executor::new(&mut rng, pwfile1, ssid, id2, Role::Initiator);
-        let mut user2 = Executor::new(&mut rng, pwfile2, ssid, id1, Role::Responder);
+        let mut user1 = Executor::new(rand::thread_rng(), pwfile1, ssid, id2, Role::Initiator);
+        let mut user2 = Executor::new(rand::thread_rng(), pwfile2, ssid, id1, Role::Responder);
 
-        let msg1 = user1.step_1(&mut rng);
-        let msg2 = user2.step_2(&mut rng, &msg1);
-        let tmp_out1 = user1.step_3(&msg2);
-        let tmp_out2 = user2.step_4();
+        let msg1 = user1.step_1();
+        let msg2 = user2.step_2(&msg1);
+        let msg3 = user1.step_3(&msg2);
+        let msg4 = user2.step_4(&msg3);
+        user1.step_5(&msg4);
 
-        assert_eq!(tmp_out1, tmp_out2);
+        assert_eq!(user1.finalize(), user2.finalize());
     }
 }
