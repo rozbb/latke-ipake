@@ -11,6 +11,7 @@ use curve25519_dalek::{
 };
 use hkdf::hmac::digest::{consts::U64, Digest};
 use rand::{CryptoRng, RngCore};
+use spake2::{Ed25519Group, Identity, Password, Spake2};
 
 //type MyHash = Blake2b<U64>;
 
@@ -79,7 +80,7 @@ impl Executor {
         }
     }
 
-    fn step_1<R: RngCore + CryptoRng>(&mut self, mut rng: R) -> Vec<u8> {
+    fn round_1<R: RngCore + CryptoRng>(&mut self, mut rng: R) -> Vec<u8> {
         self.r = Scalar::random(&mut rng);
         let R = RistrettoPoint::mul_base(&self.r);
 
@@ -93,7 +94,7 @@ impl Executor {
         msg
     }
 
-    fn step_2(mut self, msg: &[u8]) -> Vec<u8> {
+    fn round_2(&mut self, msg: &[u8]) -> Vec<u8> {
         self.tr_recv.push(msg.to_vec());
 
         let (other_X_bytes, other_R_bytes) = msg.split_at(32);
@@ -116,18 +117,17 @@ impl Executor {
         );
         let alpha = other_R * self.r;
         let beta = (other_R + other_X + (self.pwfile.Y * other_h)) * (self.r + self.pwfile.xhat);
-        let beta = RistrettoPoint::default();
         let tr = if self.role == Role::Initiator {
             self.tr_sent
-                .into_iter()
-                .zip(self.tr_recv.into_iter())
-                .flat_map(|(v, w)| [v, w].concat())
+                .iter()
+                .zip(self.tr_recv.iter())
+                .flat_map(|(v, w)| [v.as_slice(), w.as_slice()].concat())
                 .collect::<Vec<_>>()
         } else {
             self.tr_recv
-                .into_iter()
-                .zip(self.tr_sent.into_iter())
-                .flat_map(|(v, w)| [v, w].concat())
+                .iter()
+                .zip(self.tr_sent.iter())
+                .flat_map(|(v, w)| [v.as_slice(), w.as_slice()].concat())
                 .collect::<Vec<_>>()
         };
 
@@ -141,6 +141,25 @@ impl Executor {
         pake_input
 
         //todo!()
+    }
+
+    fn step_1<R: RngCore + CryptoRng>(&mut self, mut rng: R) -> Vec<u8> {
+        self.round_1(rng)
+    }
+
+    fn step_2<R: RngCore + CryptoRng>(&mut self, mut rng: R, msg: &[u8]) -> Vec<u8> {
+        self.tr_recv.push(msg.to_vec());
+        self.round_1(rng)
+    }
+
+    fn step_3(&mut self, msg: &[u8]) -> Vec<u8> {
+        self.tr_recv.push(msg.to_vec());
+        self.round_2(msg)
+    }
+
+    fn step_4(&mut self) -> Vec<u8> {
+        let last_msg = self.tr_recv.last().cloned().unwrap();
+        self.round_2(&last_msg)
     }
 }
 
@@ -167,10 +186,9 @@ mod test {
         let mut user2 = Executor::new(&mut rng, pwfile2, ssid, id1, Role::Responder);
 
         let msg1 = user1.step_1(&mut rng);
-        let msg2 = user2.step_1(&mut rng);
-
-        let tmp_out1 = user1.step_2(&msg2);
-        let tmp_out2 = user2.step_2(&msg1);
+        let msg2 = user2.step_2(&mut rng, &msg1);
+        let tmp_out1 = user1.step_3(&msg2);
+        let tmp_out2 = user2.step_4();
 
         assert_eq!(tmp_out1, tmp_out2);
     }
