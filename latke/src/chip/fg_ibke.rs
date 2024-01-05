@@ -226,3 +226,74 @@ mod test {
         assert_eq!(user1.finalize(), user2.finalize());
     }
 }
+
+trait Pake {
+    type Error;
+
+    /// Makes a new PAKE session
+    fn new(role: Role, password: &[u8]) -> Self;
+
+    /// Runs the next step of the algorithm, given the previous message. If this is the first step of the initiator, then `msg` MUST be `[]`.
+    /// Returns the next message to send, or `None` if the protocol is finished.
+    fn run(&mut self, msg: &[u8]) -> Option<Vec<u8>>;
+
+    /// Returns the session key if the protocol completed, or `None` otherwise.
+    fn finalize(&self) -> Option<SessKey>;
+}
+
+struct MySpake2 {
+    pake_state: Option<spake2::Spake2<Ed25519Group>>,
+    outgoing_msg: Vec<u8>,
+    next_step: usize,
+    key: Option<SessKey>,
+}
+
+impl Pake for MySpake2 {
+    type Error = spake2::Error;
+
+    fn new(role: Role, password: &[u8]) -> Self {
+        let (pake_state, outgoing_msg) = Spake2::<Ed25519Group>::start_symmetric_with_rng(
+            &Password::new(password),
+            &Identity::new(b"shared id"),
+            &mut rand::thread_rng(),
+        );
+
+        Self {
+            pake_state: Some(pake_state),
+            outgoing_msg,
+            next_step: 0,
+            key: None,
+        }
+    }
+    fn run(&mut self, msg: &[u8]) -> Option<Vec<u8>> {
+        let out = match self.next_step {
+            // Send the first message
+            0 => Some(self.outgoing_msg.clone()),
+            // Receive the first message, derive the session key, and send the second message
+            1 => {
+                let pake_state: Spake2<Ed25519Group> =
+                    core::mem::replace(&mut self.pake_state, None).unwrap();
+                let key = pake_state.finish(&msg).unwrap().try_into().unwrap();
+                self.key = Some(key);
+                Some(self.outgoing_msg.clone())
+            }
+            // Receive the second message and derive the session key
+            2 => {
+                let pake_state: Spake2<Ed25519Group> =
+                    core::mem::replace(&mut self.pake_state, None).unwrap();
+                let key = pake_state.finish(&msg).unwrap().try_into().unwrap();
+                self.key = Some(key);
+                None
+            }
+            _ => panic!("protocol already completed"),
+        };
+
+        self.next_step += 1;
+
+        out
+    }
+
+    fn finalize(&self) -> Option<SessKey> {
+        self.key
+    }
+}
