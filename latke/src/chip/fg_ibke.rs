@@ -2,7 +2,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::{Id, SessKey, Ssid};
+use crate::{Id, Pake, PartyRole, SessKey, Ssid};
 
 use blake2::Blake2b512;
 use curve25519_dalek::{
@@ -11,9 +11,6 @@ use curve25519_dalek::{
 };
 use hkdf::hmac::digest::{consts::U64, Digest};
 use rand::{CryptoRng, RngCore};
-use spake2::{Ed25519Group, Identity, Password, Spake2};
-
-//type MyHash = Blake2b<U64>;
 
 struct PwFile {
     id: Id,
@@ -41,19 +38,13 @@ impl PwFile {
     }
 }
 
-#[derive(PartialEq, Eq)]
-enum Role {
-    Initiator,
-    Responder,
-}
-
 // The protocol is perfectly symmetric, so we can use the same struct for both roles.
 struct Executor<R: RngCore + CryptoRng, P: Pake> {
     // The IBKE portion
     pwfile: PwFile,
     ssid: Ssid,
     other_id: Id,
-    role: Role,
+    role: PartyRole,
     r: Scalar,
 
     // The PAKE portion
@@ -69,7 +60,7 @@ struct Executor<R: RngCore + CryptoRng, P: Pake> {
 }
 
 impl<R: RngCore + CryptoRng, P: Pake> Executor<R, P> {
-    fn new(mut rng: R, pwfile: PwFile, ssid: Ssid, other_id: Id, role: Role) -> Self {
+    fn new(mut rng: R, pwfile: PwFile, ssid: Ssid, other_id: Id, role: PartyRole) -> Self {
         Executor {
             pwfile,
             ssid,
@@ -121,7 +112,7 @@ impl<R: RngCore + CryptoRng, P: Pake> Executor<R, P> {
         );
         let alpha = other_R * self.r;
         let beta = (other_R + other_X + (self.pwfile.Y * other_h)) * (self.r + self.pwfile.xhat);
-        let tr = if self.role == Role::Initiator {
+        let tr = if self.role == PartyRole::Initiator {
             self.tr_sent
                 .iter()
                 .zip(self.tr_recv.iter())
@@ -159,7 +150,7 @@ impl<R: RngCore + CryptoRng, P: Pake> Executor<R, P> {
         let ibke_out = self.round_2(msg);
 
         // Initialize the PAKE and send the first message
-        let mut pake_state = P::new(&mut self.rng, Role::Initiator, &ibke_out);
+        let mut pake_state = P::new(&mut self.rng, PartyRole::Initiator, &ibke_out);
         let pake_msg = pake_state.run(&[]);
         self.pake_state = Some(pake_state);
 
@@ -171,7 +162,7 @@ impl<R: RngCore + CryptoRng, P: Pake> Executor<R, P> {
         let ibke_out = self.round_2(&last_msg);
 
         // Initialize the PAKE, process the first message, and send the second
-        let mut pake_state = P::new(&mut self.rng, Role::Responder, &ibke_out);
+        let mut pake_state = P::new(&mut self.rng, PartyRole::Responder, &ibke_out);
         let pake_msg = pake_state.run(msg);
         self.pake_state = Some(pake_state);
 
@@ -192,6 +183,8 @@ impl<R: RngCore + CryptoRng, P: Pake> Executor<R, P> {
 mod test {
     use super::*;
 
+    use crate::spake2::MySpake2;
+
     use rand::Rng;
 
     #[test]
@@ -207,10 +200,20 @@ mod test {
         let pwfile1 = PwFile::new(&mut rng, pw.to_vec(), id1);
         let pwfile2 = PwFile::new(&mut rng, pw.to_vec(), id2);
 
-        let mut user1 =
-            Executor::<_, MySpake2>::new(rand::thread_rng(), pwfile1, ssid, id2, Role::Initiator);
-        let mut user2 =
-            Executor::<_, MySpake2>::new(rand::thread_rng(), pwfile2, ssid, id1, Role::Responder);
+        let mut user1 = Executor::<_, MySpake2>::new(
+            rand::thread_rng(),
+            pwfile1,
+            ssid,
+            id2,
+            PartyRole::Initiator,
+        );
+        let mut user2 = Executor::<_, MySpake2>::new(
+            rand::thread_rng(),
+            pwfile2,
+            ssid,
+            id1,
+            PartyRole::Responder,
+        );
 
         let msg1 = user1.step_1();
         let msg2 = user2.step_2(&msg1);
@@ -219,92 +222,5 @@ mod test {
         user1.step_5(&msg4);
 
         assert_eq!(user1.finalize(), user2.finalize());
-    }
-}
-
-trait Pake {
-    type Error;
-
-    /// Makes a new PAKE session
-    fn new<R: RngCore + CryptoRng>(rng: R, role: Role, password: &[u8]) -> Self;
-
-    /// Runs the next step of the algorithm, given the previous message. If this is the first step of the initiator, then `msg` MUST be `[]`.
-    /// Returns the next message to send, or `None` if the protocol is finished.
-    fn run(&mut self, msg: &[u8]) -> Option<Vec<u8>>;
-
-    /// Returns the session key if the protocol completed, or `None` otherwise.
-    fn finalize(&self) -> Option<SessKey>;
-}
-
-struct MySpake2 {
-    pake_state: Option<spake2::Spake2<Ed25519Group>>,
-    outgoing_msg: Vec<u8>,
-    next_step: usize,
-    key: Option<SessKey>,
-}
-
-impl Pake for MySpake2 {
-    type Error = spake2::Error;
-
-    fn new<R: RngCore + CryptoRng>(mut rng: R, role: Role, password: &[u8]) -> Self {
-        let (pake_state, outgoing_msg) = Spake2::<Ed25519Group>::start_symmetric_with_rng(
-            &Password::new(password),
-            &Identity::new(b"shared id"),
-            &mut rng,
-        );
-
-        // The initiator does even steps, the responder does odd steps
-        let next_step = if role == Role::Initiator { 0 } else { 1 };
-
-        Self {
-            pake_state: Some(pake_state),
-            outgoing_msg,
-            next_step,
-            key: None,
-        }
-    }
-
-    fn run(&mut self, incoming_msg: &[u8]) -> Option<Vec<u8>> {
-        let out = match self.next_step {
-            // Send the first message
-            0 => {
-                assert_eq!(incoming_msg.len(), 0);
-                Some(self.outgoing_msg.clone())
-            }
-            // Receive the first message, derive the session key, and send the second message
-            1 => {
-                let pake_state: Spake2<Ed25519Group> =
-                    core::mem::replace(&mut self.pake_state, None).unwrap();
-                let key = pake_state
-                    .finish(&incoming_msg)
-                    .unwrap()
-                    .try_into()
-                    .unwrap();
-                self.key = Some(key);
-                Some(self.outgoing_msg.clone())
-            }
-            // Receive the second message and derive the session key
-            2 => {
-                let pake_state: Spake2<Ed25519Group> =
-                    core::mem::replace(&mut self.pake_state, None).unwrap();
-                let key = pake_state
-                    .finish(&incoming_msg)
-                    .unwrap()
-                    .try_into()
-                    .unwrap();
-                self.key = Some(key);
-                None
-            }
-            _ => panic!("protocol already completed"),
-        };
-
-        // The initiator does even steps, the responder does odd steps
-        self.next_step += 2;
-
-        out
-    }
-
-    fn finalize(&self) -> Option<SessKey> {
-        self.key
     }
 }
