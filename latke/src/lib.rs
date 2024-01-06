@@ -5,6 +5,7 @@ use hkdf::{
 };
 use rand_core::{CryptoRng, RngCore};
 
+mod auth_enc;
 pub mod cake;
 pub mod chip;
 pub mod id_hiding_ake;
