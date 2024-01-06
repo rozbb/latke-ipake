@@ -7,6 +7,7 @@ edition = "2021"
 rand_core = "0.6.4"
 saber = { path = "../saber-rust" }
 pqcrypto-dilithium = { path = "../pqcrypto/pqcrypto-dilithium" }
+pqcrypto-traits = { path = "../pqcrypto/pqcrypto-traits" }
 hkdf = { version = "0.12", features = ["std"] }
 sha2 = "0.10"
 lioness = "0.1.2"

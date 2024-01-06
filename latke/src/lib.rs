@@ -1,3 +1,8 @@
+use blake2::Blake2b;
+use hkdf::{
+    hmac::{digest::consts::U32, SimpleHmac},
+    SimpleHkdf,
+};
 use rand_core::{CryptoRng, RngCore};
 
 pub mod cake;
@@ -5,17 +10,24 @@ pub mod chip;
 pub mod id_hiding_ake;
 pub mod spake2;
 
+pub type MyHash = Blake2b<U32>;
+pub type MyKdf = SimpleHkdf<MyHash>;
+pub type MyMac = SimpleHmac<MyHash>;
+
 /// ID strings are any bytestring. We'll limit it to 32 bytes here.
 pub type Id = [u8; 32];
 
 /// Subsession ID is some unique identifier
 pub type Ssid = [u8; 32];
 
+/// A nonce for replay protection
+pub type Nonce = [u8; 32];
+
 /// The final key of a PAKE session
 pub type SessKey = [u8; 32];
 
 /// The role of a party in a 2-party protocol
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 enum PartyRole {
     Initiator,
     Responder,

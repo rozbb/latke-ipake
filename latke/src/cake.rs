@@ -18,9 +18,7 @@ use saber::{
 };
 use sha2::Sha256;
 
-type MyHash = Blake2b<U32>;
-type MyKdf = SimpleHkdf<MyHash>;
-type MyMac = SimpleHmac<MyHash>;
+use crate::{MyKdf, MyMac};
 
 const NONCE_BYTELEN: usize = 16;
 const INITIATOR_AUTH_STR: &[u8] = b"initiator";
