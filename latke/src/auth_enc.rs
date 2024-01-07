@@ -11,7 +11,7 @@ use rand_core::{CryptoRng, RngCore};
 type MyCipher = ctr::Ctr32LE<aes::Aes128>;
 
 /// A key for authenticated encryption. This is an AES-128 key followed by a 128-bit HMAC key.
-type AuthEncKey = [u8; 32];
+pub(crate) type AuthEncKey = [u8; 32];
 
 /// Performs AES-128-CTR + HMAC authenticated encryption over the given message.
 pub(crate) fn auth_encrypt<R: RngCore + CryptoRng>(

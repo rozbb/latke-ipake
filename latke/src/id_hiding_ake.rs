@@ -1,4 +1,7 @@
-use crate::{MyKdf, MyMac, Nonce, PartyRole, SessKey, Ssid};
+use crate::{
+    auth_enc::{auth_decrypt, auth_encrypt, AuthEncKey},
+    MyKdf, MyMac, Nonce, PartyRole, SessKey, Ssid,
+};
 
 use hkdf::hmac::digest::{Mac, MacError};
 use pqcrypto_dilithium::dilithium2::{
@@ -10,6 +13,7 @@ use pqcrypto_traits::sign::{
     DetachedSignature as DetachedSignatureTrait, PublicKey, VerificationError,
 };
 use rand::Rng;
+use rand_core::{CryptoRng, RngCore};
 use saber::{
     lightsaber::{
         decapsulate_ind_cpa as kem_decap, encapsulate_ind_cpa as kem_encap,
@@ -51,7 +55,7 @@ impl From<VerificationError> for SigmaError {
     }
 }
 
-struct Executor {
+struct Executor<R: RngCore + CryptoRng> {
     role: PartyRole,
     /// The SSIDs for the two parties
     ssids: (Option<Ssid>, Option<Ssid>),
@@ -70,19 +74,25 @@ struct Executor {
     output_key: Option<SessKey>,
 
     next_step: usize,
+    rng: R,
 }
 
-impl Executor {
-    fn new<R: Rng>(mut rng: R, keypair: (SigPubkey, SigPrivkey), role: PartyRole) -> Self {
+impl<R: RngCore + CryptoRng> Executor<R> {
+    fn new(mut rng: R, keypair: (SigPubkey, SigPrivkey), role: PartyRole) -> Self {
+        let mut my_ssid = Ssid::default();
+        let mut my_nonce = Nonce::default();
+        rng.fill_bytes(&mut my_ssid);
+        rng.fill_bytes(&mut my_nonce);
+
         let ssids = if role == PartyRole::Initiator {
-            (Some(rng.gen()), None)
+            (Some(my_ssid), None)
         } else {
-            (None, Some(rng.gen()))
+            (None, Some(my_ssid))
         };
         let nonces = if role == PartyRole::Initiator {
-            (Some(rng.gen()), None)
+            (Some(my_nonce), None)
         } else {
-            (None, Some(rng.gen()))
+            (None, Some(my_nonce))
         };
 
         // The initiator does even steps, the responder does odd steps
@@ -104,6 +114,7 @@ impl Executor {
             output_key: None,
 
             next_step,
+            rng,
         }
     }
 
@@ -147,8 +158,8 @@ impl Executor {
                 // Generate the session key and the MAC key from the shared secret
                 let mut output_key = SessKey::default();
                 let mut mac_key = [0u8; 32];
-                let mut enc_key_a = [0u8; 32];
-                let mut enc_key_b = [0u8; 32];
+                let mut enc_key_a = AuthEncKey::default();
+                let mut enc_key_b = AuthEncKey::default();
                 let hk = MyKdf::from_prk(shared_secret.as_slice()).unwrap();
                 hk.expand(b"output_key", &mut output_key).unwrap();
                 hk.expand(b"mac_key", &mut mac_key).unwrap();
@@ -190,8 +201,8 @@ impl Executor {
                 );
                 let mut output_key = SessKey::default();
                 let mut mac_key = [0u8; 32];
-                let mut enc_key_a = [0u8; 32];
-                let mut enc_key_b = [0u8; 32];
+                let mut enc_key_a = AuthEncKey::default();
+                let mut enc_key_b = AuthEncKey::default();
                 let hk = MyKdf::from_prk(shared_secret.as_slice()).unwrap();
                 hk.expand(b"output_key", &mut output_key).unwrap();
                 hk.expand(b"mac_key", &mut mac_key).unwrap();
@@ -220,25 +231,29 @@ impl Executor {
                     .finalize()
                     .into_bytes();
 
-                // Send (ssid_A, ssid_B, ID, sig, mac)
+                // Encrypt (ID, sig, mac)
+                let msg_to_encrypt =
+                    [self.sig_pubkey.as_bytes(), sig.as_bytes(), mac.as_slice()].concat();
+                let ciphertext = auth_encrypt(&mut self.rng, enc_key_a, &msg_to_encrypt);
+
+                // Send (ssid_A, ssid_B, ciphertext)
                 Some(
                     [
                         self.ssids.0.as_ref().unwrap().as_slice(),
                         self.ssids.1.as_ref().unwrap().as_slice(),
-                        self.sig_pubkey.as_bytes(),
-                        sig.as_bytes(),
-                        mac.as_slice(),
+                        ciphertext.as_slice(),
                     ]
                     .concat(),
                 )
             }
             3 => {
-                // Deserialize everything
-                let (ssids_id_and_sig, incoming_mac) =
-                    incoming_msg.split_at(dbg!(64 + sig_pubkey_size() + dbg!(sig_size())));
-                let (ssids_and_id, sig) = ssids_id_and_sig.split_at(64 + sig_pubkey_size());
-                let (ssids, id) = ssids_and_id.split_at(64);
+                // Deserialize and decrypt everything
+                let (ssids, ciphertext) = incoming_msg.split_at(64);
                 let (ssid_a, ssid_b) = ssids.split_at(32);
+                let id_sig_mac = auth_decrypt(self.enc_keys.as_ref().unwrap().0, ciphertext)?;
+                let (id_and_sig, incoming_mac) =
+                    id_sig_mac.split_at(sig_pubkey_size() + sig_size());
+                let (id, sig) = id_and_sig.split_at(sig_pubkey_size());
 
                 self.output_id = Some(SigPubkey::from_bytes(id)?);
                 let incoming_sig = DetachedSignature::from_bytes(sig)?;
@@ -285,25 +300,33 @@ impl Executor {
                     .finalize()
                     .into_bytes();
 
-                // Send (ssid_A, ssid_B, ID, sig, mac)
+                // Encrypt (ID, sig, mac)
+                let msg_to_encrypt =
+                    [self.sig_pubkey.as_bytes(), sig.as_bytes(), mac.as_slice()].concat();
+                let ciphertext = auth_encrypt(
+                    &mut self.rng,
+                    self.enc_keys.as_ref().unwrap().1,
+                    &msg_to_encrypt,
+                );
+
+                // Send (ssid_A, ssid_B, ciphertext)
                 Some(
                     [
                         self.ssids.0.as_ref().unwrap().as_slice(),
                         self.ssids.1.as_ref().unwrap().as_slice(),
-                        self.sig_pubkey.as_bytes(),
-                        sig.as_bytes(),
-                        mac.as_slice(),
+                        ciphertext.as_slice(),
                     ]
                     .concat(),
                 )
             }
             4 => {
-                // Deserialize everything
-                let (ssids_id_and_sig, incoming_mac) =
-                    incoming_msg.split_at(64 + sig_pubkey_size() + sig_size());
-                let (ssids_and_id, sig) = ssids_id_and_sig.split_at(64 + sig_pubkey_size());
-                let (ssids, id) = ssids_and_id.split_at(64);
+                // Deserialize and decrypt everything
+                let (ssids, ciphertext) = incoming_msg.split_at(64);
                 let (ssid_a, ssid_b) = ssids.split_at(32);
+                let id_sig_mac = auth_decrypt(self.enc_keys.as_ref().unwrap().1, ciphertext)?;
+                let (id_and_sig, incoming_mac) =
+                    id_sig_mac.split_at(sig_pubkey_size() + sig_size());
+                let (id, sig) = id_and_sig.split_at(sig_pubkey_size());
 
                 self.output_id = Some(SigPubkey::from_bytes(id)?);
                 let incoming_sig = DetachedSignature::from_bytes(sig)?;
