@@ -8,7 +8,7 @@ use rand_core::{CryptoRng, RngCore};
 mod auth_enc;
 pub mod cake;
 pub mod chip;
-pub mod id_hiding_ake;
+pub mod id_sigma_r;
 pub mod spake2;
 
 pub type MyHash = Blake2b<U32>;
