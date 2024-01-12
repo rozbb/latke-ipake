@@ -48,3 +48,43 @@ trait Pake {
     /// Returns the session key if the protocol completed, or `None` otherwise.
     fn finalize(&self) -> Option<SessKey>;
 }
+
+/// An identity based key exchange protocol in the style of the AKE-to-IBKE transform described in LATKE.
+/// The only thing of note is that users generate their own user keypair, and `extract` takes the user public key as auxiliary data.
+trait IdentityBasedKeyExchange {
+    type MainPubkey;
+    type MainPrivkey;
+    type UserPubkey;
+    type UserPrivkey;
+    type Certificate;
+    type Error;
+
+    /// Generates the main keypair for the key generation center (KGC)
+    fn gen_main_keypair<R: RngCore + CryptoRng>(rng: R) -> (Self::MainPubkey, Self::MainPrivkey);
+
+    /// Generates a user keypair. The public part of this is given to the KGC for extraction
+    fn gen_user_keypair<R: RngCore + CryptoRng>(rng: R) -> (Self::UserPubkey, Self::UserPrivkey);
+
+    /// Extracts a certificate for the given identity and user public key
+    fn extract(msk: Self::MainPrivkey, id: &Id, upk: &Self::UserPubkey) -> Self::Certificate;
+
+    /// Begins a new session with a given SSID
+    fn new_session<R: RngCore + CryptoRng>(
+        rng: R,
+        ssid: Ssid,
+        mpk: Self::MainPubkey,
+        cert: Self::Certificate,
+        usk: Self::MainPrivkey,
+        role: PartyRole,
+    ) -> Self;
+
+    /// Runs the next step of the protocol. `incoming_msg` MUST be empty for the first step.
+    fn run<R: RngCore + CryptoRng>(
+        &mut self,
+        rng: R,
+        incoming_msg: &[u8],
+    ) -> Result<Option<Vec<u8>>, Self::Error>;
+
+    /// Finalizes the protocol and returns the session key and the ID of the other party
+    fn finalize(&self) -> (Id, SessKey);
+}
