@@ -1,8 +1,9 @@
 use crate::{
     auth_enc::{auth_decrypt, auth_encrypt, AuthEncKey},
-    MyKdf, MyMac, Nonce, PartyRole, SessKey, Ssid,
+    Id, MyKdf, MyMac, Nonce, PartyRole, SessKey, Ssid,
 };
 
+use blake2::Digest;
 use hkdf::hmac::digest::{Mac, MacError};
 use pqcrypto_dilithium::dilithium2::{
     detached_sign, public_key_bytes as sig_pubkey_size, signature_bytes as sig_size,
@@ -21,6 +22,7 @@ use saber::{
     },
     Error as SaberError,
 };
+use sha2::Sha256;
 
 #[derive(Debug)]
 enum SigmaError {
@@ -55,14 +57,20 @@ impl From<VerificationError> for SigmaError {
     }
 }
 
-struct Executor<R: RngCore + CryptoRng> {
+struct Executor {
     role: PartyRole,
     /// The SSIDs for the two parties
     ssids: (Option<Ssid>, Option<Ssid>),
     /// The nonces for the two parties
     nonces: (Option<Nonce>, Option<Nonce>),
+    /// The main public key of this identity-based system. This is used to verify certificates.
+    mpk: SigPubkey,
+    /// The certificate Extracted for this party by the key generation center
+    cert: SigmaCert,
+    /// The corresponding secret key for the public key in `cert`
     sig_privkey: SigPrivkey,
-    sig_pubkey: SigPubkey,
+
+    // Ephemeral values
     kem_pubkey: Option<INDCPAPublicKey>,
     kem_privkey: Option<INDCPASecretKey>,
     encapped_key: Option<EncappedKey>,
@@ -70,15 +78,30 @@ struct Executor<R: RngCore + CryptoRng> {
     enc_keys: Option<([u8; 32], [u8; 32])>,
 
     // The output of a post-specified peer IBKE is (ID, session_key)
-    output_id: Option<SigPubkey>,
+    output_id: Option<Id>,
     output_key: Option<SessKey>,
 
     next_step: usize,
-    rng: R,
 }
 
-impl<R: RngCore + CryptoRng> Executor<R> {
-    fn new(mut rng: R, keypair: (SigPubkey, SigPrivkey), role: PartyRole) -> Self {
+impl Executor {
+    fn extract(msk: SigPrivkey, id: &Id, upk: &SigPubkey) -> SigmaCert {
+        let sig = detached_sign(&[id, upk.as_bytes()].concat(), &msk);
+        SigmaCert {
+            id: id.clone(),
+            upk: upk.clone(),
+            sig,
+        }
+    }
+
+    /// Creates a new IBKE executor from a main public key, a certificate, a user signing key for the `upk` in that certificate, and a protocol role
+    fn new<R: RngCore + CryptoRng>(
+        mut rng: R,
+        mpk: SigPubkey,
+        cert: SigmaCert,
+        usk: SigPrivkey,
+        role: PartyRole,
+    ) -> Self {
         let mut my_ssid = Ssid::default();
         let mut my_nonce = Nonce::default();
         rng.fill_bytes(&mut my_ssid);
@@ -102,8 +125,9 @@ impl<R: RngCore + CryptoRng> Executor<R> {
             role,
             ssids,
             nonces,
-            sig_privkey: keypair.1,
-            sig_pubkey: keypair.0,
+            mpk,
+            cert,
+            sig_privkey: usk,
             kem_pubkey: None,
             kem_privkey: None,
             encapped_key: None,
@@ -114,15 +138,18 @@ impl<R: RngCore + CryptoRng> Executor<R> {
             output_key: None,
 
             next_step,
-            rng,
         }
     }
 
-    fn finalize(&self) -> (SigPubkey, SessKey) {
+    fn finalize(&self) -> (Id, SessKey) {
         (self.output_id.unwrap(), self.output_key.unwrap())
     }
 
-    fn run(&mut self, incoming_msg: &[u8]) -> Result<Option<Vec<u8>>, SigmaError> {
+    fn run<R: RngCore + CryptoRng>(
+        &mut self,
+        mut rng: R,
+        incoming_msg: &[u8],
+    ) -> Result<Option<Vec<u8>>, SigmaError> {
         let out = match self.next_step {
             // Generate an ephemeral keypair and send the pubkey
             0 => {
@@ -212,29 +239,33 @@ impl<R: RngCore + CryptoRng> Executor<R> {
                 self.mac_key = Some(mac_key);
                 self.enc_keys = Some((enc_key_a, enc_key_b));
 
-                // Time for some key confirmation. Send the user ID (i.e., the sig pubkey), a signature over the transcript, and a MAC over the ID
+                let cert_bytes = self.cert.to_bytes();
+
+                // Time for some key confirmation. Send the cert, a signature over the transcript, and a MAC over the ID
                 // Now compute the signature over what's happened so far
-                let msg_to_sign = [
-                    self.nonces.1.as_ref().unwrap().as_slice(),
-                    self.ssids.0.as_ref().unwrap().as_slice(),
-                    self.kem_pubkey.as_ref().unwrap().to_bytes().as_bytes(),
-                    self.encapped_key.as_ref().unwrap().as_bytes(),
-                ]
-                .concat();
-                let sig = detached_sign(&msg_to_sign, &self.sig_privkey);
+                let sig = detached_sign(
+                    &[
+                        self.nonces.1.as_ref().unwrap().as_slice(),
+                        self.ssids.0.as_ref().unwrap().as_slice(),
+                        self.kem_pubkey.as_ref().unwrap().to_bytes().as_bytes(),
+                        self.encapped_key.as_ref().unwrap().as_bytes(),
+                        &cert_bytes,
+                    ]
+                    .concat(),
+                    &self.sig_privkey,
+                );
 
                 // Compute the MAC over the (ssid, ID)
                 let mac = MyMac::new_from_slice(self.mac_key.as_ref().unwrap())
                     .unwrap()
                     .chain_update(&[0x00])
-                    .chain_update(self.sig_pubkey.as_bytes())
+                    .chain_update(self.cert.id)
                     .finalize()
                     .into_bytes();
 
-                // Encrypt (ID, sig, mac)
-                let msg_to_encrypt =
-                    [self.sig_pubkey.as_bytes(), sig.as_bytes(), mac.as_slice()].concat();
-                let ciphertext = auth_encrypt(&mut self.rng, enc_key_a, &msg_to_encrypt);
+                // Encrypt (sig, mac, cert)
+                let msg_to_encrypt = [sig.as_bytes(), mac.as_slice(), &cert_bytes].concat();
+                let ciphertext = auth_encrypt(&mut rng, enc_key_a, &msg_to_encrypt);
 
                 // Send (ssid_A, ssid_B, ciphertext)
                 Some(
@@ -250,63 +281,73 @@ impl<R: RngCore + CryptoRng> Executor<R> {
                 // Deserialize and decrypt everything
                 let (ssids, ciphertext) = incoming_msg.split_at(64);
                 let (ssid_a, ssid_b) = ssids.split_at(32);
-                let id_sig_mac = auth_decrypt(self.enc_keys.as_ref().unwrap().0, ciphertext)?;
-                let (id_and_sig, incoming_mac) =
-                    id_sig_mac.split_at(sig_pubkey_size() + sig_size());
-                let (id, sig) = id_and_sig.split_at(sig_pubkey_size());
+                let sig_mac_cert = auth_decrypt(self.enc_keys.as_ref().unwrap().0, ciphertext)?;
+                let (sig_mac, incoming_cert_bytes) =
+                    sig_mac_cert.split_at(sig_mac_cert.len() - SigmaCert::size());
+                let (sig, incoming_mac) = sig_mac.split_at(sig_size());
 
-                self.output_id = Some(SigPubkey::from_bytes(id)?);
                 let incoming_sig = DetachedSignature::from_bytes(sig)?;
+                let incoming_cert = SigmaCert::from_bytes(incoming_cert_bytes)?;
+                self.output_id = Some(incoming_cert.id);
 
-                // Do the verifications. Check the SSIDs match and that the signature and MAC verify
+                // Do the verifications. Check the SSIDs match, that the certificate verifies, and that the signature and MAC verify
                 if ssid_a != self.ssids.0.as_ref().unwrap().as_slice()
                     || ssid_b != self.ssids.1.as_ref().unwrap().as_slice()
                 {
                     return Err(SigmaError::InvalidSsid);
                 }
-                let msg_to_verify = [
-                    self.nonces.1.as_ref().unwrap().as_slice(),
-                    self.ssids.0.as_ref().unwrap().as_slice(),
-                    self.kem_pubkey.as_ref().unwrap().to_bytes().as_bytes(),
-                    self.encapped_key.as_ref().unwrap().as_bytes(),
-                ]
-                .concat();
+                // Check the certificate verifies
+                verify_detached_signature(
+                    &incoming_cert.sig,
+                    &[&incoming_cert.id, incoming_cert.upk.as_bytes()].concat(),
+                    &self.mpk,
+                )?;
+                // Check the other signature verifies
                 verify_detached_signature(
                     &incoming_sig,
-                    &msg_to_verify,
-                    &self.output_id.as_ref().unwrap(),
+                    &[
+                        self.nonces.1.as_ref().unwrap().as_slice(),
+                        self.ssids.0.as_ref().unwrap().as_slice(),
+                        self.kem_pubkey.as_ref().unwrap().to_bytes().as_bytes(),
+                        self.encapped_key.as_ref().unwrap().as_bytes(),
+                        &incoming_cert_bytes,
+                    ]
+                    .concat(),
+                    &incoming_cert.upk,
                 )?;
                 MyMac::new_from_slice(self.mac_key.as_ref().unwrap())
                     .unwrap()
                     .chain_update(&[0x00])
-                    .chain_update(self.output_id.as_ref().unwrap().as_bytes())
+                    .chain_update(self.output_id.as_ref().unwrap())
                     .verify_slice(incoming_mac)?;
 
-                // Now comput the final message. Compute the signature and MAC, similar to above
-                let msg_to_sign = [
-                    self.nonces.0.as_ref().unwrap().as_slice(),
-                    self.ssids.1.as_ref().unwrap().as_slice(),
-                    self.encapped_key.as_ref().unwrap().as_bytes(),
-                    self.kem_pubkey.as_ref().unwrap().to_bytes().as_bytes(),
-                ]
-                .concat();
-                let sig = detached_sign(&msg_to_sign, &self.sig_privkey);
+                // Now compute the final message. Compute the signature and MAC, similar to above
+                let my_cert_bytes = self.cert.to_bytes();
+                let sig = detached_sign(
+                    &[
+                        self.nonces.0.as_ref().unwrap().as_slice(),
+                        self.ssids.1.as_ref().unwrap().as_slice(),
+                        self.encapped_key.as_ref().unwrap().as_bytes(),
+                        self.kem_pubkey.as_ref().unwrap().to_bytes().as_bytes(),
+                        &my_cert_bytes,
+                    ]
+                    .concat(),
+                    &self.sig_privkey,
+                );
 
                 // Compute the MAC over the (ssid, ID)
                 let mac = MyMac::new_from_slice(self.mac_key.as_ref().unwrap())
                     .unwrap()
                     .chain_update(&[0x01])
-                    .chain_update(self.sig_pubkey.as_bytes())
+                    .chain_update(self.cert.id)
                     .finalize()
                     .into_bytes();
 
-                // Encrypt (ID, sig, mac)
-                let msg_to_encrypt =
-                    [self.sig_pubkey.as_bytes(), sig.as_bytes(), mac.as_slice()].concat();
+                // Encrypt (sig, mac, cert)
                 let ciphertext = auth_encrypt(
-                    &mut self.rng,
+                    &mut rng,
                     self.enc_keys.as_ref().unwrap().1,
-                    &msg_to_encrypt,
+                    &[sig.as_bytes(), mac.as_slice(), &my_cert_bytes].concat(),
                 );
 
                 // Send (ssid_A, ssid_B, ciphertext)
@@ -323,37 +364,45 @@ impl<R: RngCore + CryptoRng> Executor<R> {
                 // Deserialize and decrypt everything
                 let (ssids, ciphertext) = incoming_msg.split_at(64);
                 let (ssid_a, ssid_b) = ssids.split_at(32);
-                let id_sig_mac = auth_decrypt(self.enc_keys.as_ref().unwrap().1, ciphertext)?;
-                let (id_and_sig, incoming_mac) =
-                    id_sig_mac.split_at(sig_pubkey_size() + sig_size());
-                let (id, sig) = id_and_sig.split_at(sig_pubkey_size());
+                let sig_mac_cert = auth_decrypt(self.enc_keys.as_ref().unwrap().1, ciphertext)?;
+                let (sig_mac, incoming_cert_bytes) =
+                    sig_mac_cert.split_at(sig_mac_cert.len() - SigmaCert::size());
+                let (sig, incoming_mac) = sig_mac.split_at(sig_size());
 
-                self.output_id = Some(SigPubkey::from_bytes(id)?);
                 let incoming_sig = DetachedSignature::from_bytes(sig)?;
+                let incoming_cert = SigmaCert::from_bytes(incoming_cert_bytes)?;
+                self.output_id = Some(incoming_cert.id);
 
-                // Do the verifications. Check the SSIDs match and that the signature and MAC verify
+                // Do the verifications. Check the SSIDs match, that the certificate verifies, and that the signature and MAC verify
                 if ssid_a != self.ssids.0.as_ref().unwrap().as_slice()
                     || ssid_b != self.ssids.1.as_ref().unwrap().as_slice()
                 {
                     return Err(SigmaError::InvalidSsid);
                 }
-                let msg_to_verify = [
-                    self.nonces.0.as_ref().unwrap().as_slice(),
-                    self.ssids.1.as_ref().unwrap().as_slice(),
-                    self.encapped_key.as_ref().unwrap().as_bytes(),
-                    self.kem_pubkey.as_ref().unwrap().to_bytes().as_bytes(),
-                ]
-                .concat();
+                // Check the certificate verifies
+                verify_detached_signature(
+                    &incoming_cert.sig,
+                    &[&incoming_cert.id, incoming_cert.upk.as_bytes()].concat(),
+                    &self.mpk,
+                )?;
+                // Check the other signature verifies
                 verify_detached_signature(
                     &incoming_sig,
-                    &msg_to_verify,
-                    &self.output_id.as_ref().unwrap(),
+                    &[
+                        self.nonces.0.as_ref().unwrap().as_slice(),
+                        self.ssids.1.as_ref().unwrap().as_slice(),
+                        self.encapped_key.as_ref().unwrap().as_bytes(),
+                        self.kem_pubkey.as_ref().unwrap().to_bytes().as_bytes(),
+                        &incoming_cert_bytes,
+                    ]
+                    .concat(),
+                    &incoming_cert.upk,
                 )?;
                 // Compute the MAC over the (ssid, ID)
                 MyMac::new_from_slice(self.mac_key.as_ref().unwrap())
                     .unwrap()
                     .chain_update(&[0x01])
-                    .chain_update(self.output_id.as_ref().unwrap().as_bytes())
+                    .chain_update(self.output_id.as_ref().unwrap())
                     .verify_slice(incoming_mac)?;
 
                 None
@@ -369,6 +418,45 @@ impl<R: RngCore + CryptoRng> Executor<R> {
     }
 }
 
+/// A certificate is a signed statement that a party with a given ID has a certain public key.
+/// For our PQ Sigma protocol, the signature is a Dilithium signature, and the public key is a Dilithium public key.
+struct SigmaCert {
+    id: Id,
+    upk: SigPubkey,
+    sig: DetachedSignature,
+}
+
+impl SigmaCert {
+    fn size() -> usize {
+        Id::default().len() + sig_pubkey_size() + sig_size()
+    }
+
+    /// Serialize as upk || sig
+    fn to_bytes(&self) -> Vec<u8> {
+        [&self.id, self.upk.as_bytes(), self.sig.as_bytes()].concat()
+    }
+
+    /// Deserialize from upk || sig
+    fn from_bytes(bytes: &[u8]) -> Result<Self, SigmaError> {
+        if bytes.len() != Self::size() {
+            return Err(SigmaError::InvalidLength(
+                pqcrypto_traits::Error::BadLength {
+                    name: "cert",
+                    actual: bytes.len(),
+                    expected: Self::size(),
+                },
+            ));
+        }
+        let (id_upk_bytes, sig_bytes) = bytes.split_at(Id::default().len() + sig_pubkey_size());
+        let (id, upk_bytes) = id_upk_bytes.split_at(Id::default().len());
+        Ok(Self {
+            id: id.try_into().unwrap(),
+            upk: SigPubkey::from_bytes(upk_bytes)?,
+            sig: DetachedSignature::from_bytes(sig_bytes)?,
+        })
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -376,24 +464,32 @@ mod test {
 
     #[test]
     fn sigma_r_correctness() {
-        let keypair1 = gen_sig_keypair();
-        let keypair2 = gen_sig_keypair();
+        let mut rng = rand::thread_rng();
+        let (mpk, msk) = gen_sig_keypair();
+        let (upk1, usk1) = gen_sig_keypair();
+        let (upk2, usk2) = gen_sig_keypair();
 
-        let mut user1 = Executor::new(rand::thread_rng(), keypair1, PartyRole::Initiator);
-        let mut user2 = Executor::new(rand::thread_rng(), keypair2, PartyRole::Responder);
+        let id1 = rng.gen();
+        let id2 = rng.gen();
 
-        let msg1 = user1.run(&[]).unwrap().unwrap();
-        let msg2 = user2.run(&msg1).unwrap().unwrap();
-        let msg3 = user1.run(&msg2).unwrap().unwrap();
-        let msg4 = user2.run(&msg3).unwrap().unwrap();
-        let msg5 = user1.run(&msg4).unwrap();
+        let cert1 = Executor::extract(msk, &id1, &upk1);
+        let cert2 = Executor::extract(msk, &id2, &upk2);
+
+        let mut user1 = Executor::new(&mut rng, mpk.clone(), cert1, usk1, PartyRole::Initiator);
+        let mut user2 = Executor::new(&mut rng, mpk.clone(), cert2, usk2, PartyRole::Responder);
+
+        let msg1 = user1.run(&mut rng, &[]).unwrap().unwrap();
+        let msg2 = user2.run(&mut rng, &msg1).unwrap().unwrap();
+        let msg3 = user1.run(&mut rng, &msg2).unwrap().unwrap();
+        let msg4 = user2.run(&mut rng, &msg3).unwrap().unwrap();
+        let msg5 = user1.run(&mut rng, &msg4).unwrap();
 
         let (user1_interlocutor, user1_key) = user1.finalize();
         let (user2_interlocutor, user2_key) = user2.finalize();
 
         assert!(msg5.is_none());
-        assert!(user1_interlocutor == keypair2.0);
-        assert!(user2_interlocutor == keypair1.0);
+        assert!(user1_interlocutor == id2);
+        assert!(user2_interlocutor == id1);
         assert_eq!(user1_key, user2_key);
     }
 }
