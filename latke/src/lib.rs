@@ -10,7 +10,7 @@ pub mod cake;
 pub mod chip;
 mod eue_transform;
 pub mod id_sigma_r;
-pub mod spake2;
+pub mod kc_spake2;
 
 pub type MyHash = Blake2b<U32>;
 pub type MyKdf = SimpleHkdf<MyHash>;

@@ -1,4 +1,4 @@
-//! Implements the KC-SPAKE2 protocol by [Shoup](https://eprint.iacr.org/2020/313)
+//! Implements the KC-SPAKE2 PAKE by [Shoup](https://eprint.iacr.org/2020/313)
 use crate::{MyKdf, MyMac, Pake, PartyRole, SessKey};
 
 use blake2::digest::{MacError, OutputSizeUser};
@@ -9,7 +9,7 @@ use subtle::ConstantTimeEq;
 
 pub const PROTO_ID: &[u8] = b"latke_kc_spake2";
 
-/// The KC-SPAKE2 protocol by [Shoup](https://eprint.iacr.org/2020/313)
+/// The KC-SPAKE2 PAKE by [Shoup](https://eprint.iacr.org/2020/313)
 pub struct KcSpake2 {
     /// The underlying SPAKE2 protocol. KC-SPAKE2 is basically this plus 2 MACs
     pake_state: Option<spake2::Spake2<Ed25519Group>>,
