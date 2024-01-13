@@ -8,6 +8,7 @@ use rand_core::{CryptoRng, RngCore};
 mod auth_enc;
 pub mod cake;
 pub mod chip;
+mod eue_transform;
 pub mod id_sigma_r;
 pub mod spake2;
 
@@ -28,7 +29,7 @@ pub type Nonce = [u8; 32];
 pub type SessKey = [u8; 32];
 
 /// The role of a party in a 2-party protocol
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum PartyRole {
     Initiator,
     Responder,
@@ -59,6 +60,9 @@ trait IdentityBasedKeyExchange {
     type Certificate;
     type Error;
 
+    /// Auxiliary data that the protocol might want for creating a new session. Our Encrypt-and-Unconditionally-Execute transform uses this to take in the encryption key.
+    type AuxSessData;
+
     /// Generates the main keypair for the key generation center (KGC)
     fn gen_main_keypair<R: RngCore + CryptoRng>(rng: R) -> (Self::MainPubkey, Self::MainPrivkey);
 
@@ -66,7 +70,7 @@ trait IdentityBasedKeyExchange {
     fn gen_user_keypair<R: RngCore + CryptoRng>(rng: R) -> (Self::UserPubkey, Self::UserPrivkey);
 
     /// Extracts a certificate for the given identity and user public key
-    fn extract(msk: Self::MainPrivkey, id: &Id, upk: &Self::UserPubkey) -> Self::Certificate;
+    fn extract(msk: &Self::MainPrivkey, id: &Id, upk: &Self::UserPubkey) -> Self::Certificate;
 
     /// Begins a new session with a given SSID
     fn new_session<R: RngCore + CryptoRng>(
@@ -76,6 +80,7 @@ trait IdentityBasedKeyExchange {
         cert: Self::Certificate,
         usk: Self::MainPrivkey,
         role: PartyRole,
+        aux: Self::AuxSessData,
     ) -> Self;
 
     /// Runs the next step of the protocol. `incoming_msg` MUST be empty for the first step.
@@ -84,6 +89,9 @@ trait IdentityBasedKeyExchange {
         rng: R,
         incoming_msg: &[u8],
     ) -> Result<Option<Vec<u8>>, Self::Error>;
+
+    /// Simulates running the next step of the protocol. This returns the size of the message that would be sent, and internally updates the state to the next step
+    fn run_sim(&mut self) -> Option<usize>;
 
     /// Finalizes the protocol and returns the session key and the ID of the other party
     fn finalize(&self) -> (Id, SessKey);

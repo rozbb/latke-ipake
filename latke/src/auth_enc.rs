@@ -4,11 +4,13 @@ use crate::MyMac;
 
 use aes::cipher::{KeyIvInit, StreamCipher, StreamCipherSeek};
 use blake2::digest::OutputSizeUser;
-use hkdf::hmac::digest::{Mac, MacError};
+use hkdf::hmac::digest::{typenum::Unsigned, Mac, MacError};
 use rand_core::{CryptoRng, RngCore};
 
 /// Use AES-128 in CTR mode with a 32-bit little-endian counter. Our messages are very small, so 32 bits is more than enough.
 type MyCipher = ctr::Ctr32LE<aes::Aes128>;
+
+pub(crate) const TAGLEN: usize = <MyMac as OutputSizeUser>::OutputSize::USIZE;
 
 /// A key for authenticated encryption. This is an AES-128 key followed by a 128-bit HMAC key.
 pub(crate) type AuthEncKey = [u8; 32];

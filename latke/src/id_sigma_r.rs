@@ -17,12 +17,13 @@ use saber::{
     lightsaber::{
         decapsulate_ind_cpa as kem_decap, encapsulate_ind_cpa as kem_encap,
         keygen_ind_cpa as kem_keygen, Ciphertext as EncappedKey, INDCPAPublicKey, INDCPASecretKey,
+        BYTES_CCA_DEC, INDCPA_PUBLICKEYBYTES,
     },
     Error as SaberError,
 };
 
 #[derive(Debug)]
-enum SigmaError {
+pub(crate) enum SigmaError {
     Kem(SaberError),
     InvalidLength(pqcrypto_traits::Error),
     Sig(VerificationError),
@@ -55,7 +56,7 @@ impl From<VerificationError> for SigmaError {
 
 /// A certificate is a signed statement that a party with a given ID has a certain public key.
 /// For our PQ Sigma protocol, the signature is a Dilithium signature, and the public key is a Dilithium public key.
-struct SigmaCert {
+pub(crate) struct SigmaCert {
     id: Id,
     upk: SigPubkey,
     sig: DetachedSignature,
@@ -93,7 +94,7 @@ impl SigmaCert {
 }
 
 /// The SIGMA-R protocol described in the [SIGMA paper](https://iacr.org/archive/crypto2003/27290399/27290399.pdf), modified  by [Peikert](https://eprint.iacr.org/2014/070) to use KEMs, and transformed using the AKE-to-IBKE transform describe in LATKE
-struct IdSigmaR {
+pub(crate) struct IdSigmaR {
     /// The SSID for the session. For consistency in benches we assume this is negotiated beforehand. But SIGMA does define a way to negotiate this.
     ssid: Ssid,
     /// The nonces for the two parties
@@ -127,6 +128,8 @@ impl IdentityBasedKeyExchange for IdSigmaR {
     type Certificate = SigmaCert;
     type Error = SigmaError;
 
+    type AuxSessData = ();
+
     fn gen_main_keypair<R: RngCore + CryptoRng>(mut rng: R) -> (SigPubkey, SigPrivkey) {
         // Generate random coins and use them for generation. We have to do this because gen_sig_keypair uses its own RNG
         let mut coins = KeygenCoins::default();
@@ -139,8 +142,8 @@ impl IdentityBasedKeyExchange for IdSigmaR {
         Self::gen_main_keypair(rng)
     }
 
-    fn extract(msk: SigPrivkey, id: &Id, upk: &SigPubkey) -> SigmaCert {
-        let sig = detached_sign(&[id, upk.as_bytes()].concat(), &msk);
+    fn extract(msk: &SigPrivkey, id: &Id, upk: &SigPubkey) -> SigmaCert {
+        let sig = detached_sign(&[id, upk.as_bytes()].concat(), msk);
         SigmaCert {
             id: id.clone(),
             upk: upk.clone(),
@@ -156,6 +159,7 @@ impl IdentityBasedKeyExchange for IdSigmaR {
         cert: SigmaCert,
         usk: SigPrivkey,
         role: PartyRole,
+        _aux: (),
     ) -> Self {
         let mut my_nonce = Nonce::default();
         rng.fill_bytes(&mut my_nonce);
@@ -190,6 +194,32 @@ impl IdentityBasedKeyExchange for IdSigmaR {
 
     fn finalize(&self) -> (Id, SessKey) {
         (self.output_id.unwrap(), self.output_key.unwrap())
+    }
+
+    fn run_sim(&mut self) -> Option<usize> {
+        let out = match self.next_step {
+            0 => {
+                // Sends a nonce followed by a KEM pubkey
+                Some(Nonce::default().len() + INDCPA_PUBLICKEYBYTES)
+            }
+            1 => {
+                // Sends a nonce followed by an encapsulated key
+                Some(Nonce::default().len() + BYTES_CCA_DEC)
+            }
+            2 | 3 => {
+                // Sends an authenticated ciphertext of (sig, mac, cert). So include that length, plus the length of the authenticated encryption tag
+                Some(sig_size() + 32 + SigmaCert::size() + crate::auth_enc::TAGLEN)
+            }
+            4 => {
+                // All done
+                None
+            }
+            _ => panic!("protocol already finished"),
+        };
+
+        self.next_step += 2;
+
+        out
     }
 
     fn run<R: RngCore + CryptoRng>(
@@ -252,6 +282,7 @@ impl IdentityBasedKeyExchange for IdSigmaR {
             2 => {
                 // Deserialize everything
                 let (nonce_b, encapped_key_bytes) = incoming_msg.split_at(Nonce::default().len());
+                assert_eq!(encapped_key_bytes.len(), BYTES_CCA_DEC);
 
                 // Save all the values and check that the ssid_a matches what we gave the peer
                 self.encapped_key = Some(EncappedKey::from_bytes(encapped_key_bytes)?);
@@ -454,8 +485,8 @@ mod test {
         let (upk2, usk2) = IdSigmaR::gen_user_keypair(&mut rng);
 
         // Have the KGC sign the user's pubkeys
-        let cert1 = IdSigmaR::extract(msk, &id1, &upk1);
-        let cert2 = IdSigmaR::extract(msk, &id2, &upk2);
+        let cert1 = IdSigmaR::extract(&msk, &id1, &upk1);
+        let cert2 = IdSigmaR::extract(&msk, &id2, &upk2);
 
         // Start a new session
         let ssid = rng.gen();
@@ -466,6 +497,7 @@ mod test {
             cert1,
             usk1,
             PartyRole::Initiator,
+            (),
         );
         let mut user2 = IdSigmaR::new_session(
             &mut rng,
@@ -474,6 +506,7 @@ mod test {
             cert2,
             usk2,
             PartyRole::Responder,
+            (),
         );
 
         // Run the session until completion
