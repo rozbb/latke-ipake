@@ -37,17 +37,17 @@ enum PartyRole {
 
 /// A trait representing a PAKE protocol
 trait Pake {
-    type Error;
+    type Error: core::fmt::Debug;
 
     /// Makes a new PAKE session
     fn new<R: RngCore + CryptoRng>(rng: R, role: PartyRole, password: &[u8]) -> Self;
 
     /// Runs the next step of the algorithm, given the previous message. If this is the first step of the initiator, then `msg` MUST be `[]`.
-    /// Returns the next message to send, or `None` if the protocol is finished.
-    fn run(&mut self, msg: &[u8]) -> Option<Vec<u8>>;
+    /// Returns the next message to send, or `Ok(None)` if the protocol successfully completed.
+    fn run(&mut self, msg: &[u8]) -> Result<Option<Vec<u8>>, Self::Error>;
 
-    /// Returns the session key if the protocol completed, or `None` otherwise.
-    fn finalize(&self) -> Option<SessKey>;
+    /// Returns the session key if the protocol successfully completed. Panics otherwise.
+    fn finalize(&self) -> SessKey;
 }
 
 /// An identity based key exchange protocol in the style of the AKE-to-IBKE transform described in LATKE.

@@ -154,7 +154,7 @@ impl<R: RngCore + CryptoRng, P: Pake> Executor<R, P> {
         let pake_msg = pake_state.run(&[]);
         self.pake_state = Some(pake_state);
 
-        pake_msg.unwrap()
+        pake_msg.unwrap().unwrap()
     }
 
     fn step_4(&mut self, msg: &[u8]) -> Vec<u8> {
@@ -166,12 +166,17 @@ impl<R: RngCore + CryptoRng, P: Pake> Executor<R, P> {
         let pake_msg = pake_state.run(msg);
         self.pake_state = Some(pake_state);
 
-        pake_msg.unwrap()
+        pake_msg.unwrap().unwrap()
     }
 
-    fn step_5(&mut self, msg: &[u8]) {
+    fn step_5(&mut self, msg: &[u8]) -> Vec<u8> {
         // Process the second PAKE message
-        self.pake_state.as_mut().unwrap().run(msg);
+        self.pake_state.as_mut().unwrap().run(msg).unwrap().unwrap()
+    }
+
+    fn step_6(&mut self, msg: &[u8]) {
+        // Process the third PAKE message
+        self.pake_state.as_mut().unwrap().run(msg).unwrap();
     }
 
     fn finalize(&self) -> SessKey {
@@ -183,7 +188,7 @@ impl<R: RngCore + CryptoRng, P: Pake> Executor<R, P> {
 mod test {
     use super::*;
 
-    use crate::spake2::MySpake2;
+    use crate::spake2::KcSpake2;
 
     use rand::Rng;
 
@@ -200,14 +205,14 @@ mod test {
         let pwfile1 = PwFile::new(&mut rng, pw.to_vec(), id1);
         let pwfile2 = PwFile::new(&mut rng, pw.to_vec(), id2);
 
-        let mut user1 = Executor::<_, MySpake2>::new(
+        let mut user1 = Executor::<_, KcSpake2>::new(
             rand::thread_rng(),
             pwfile1,
             ssid,
             id2,
             PartyRole::Initiator,
         );
-        let mut user2 = Executor::<_, MySpake2>::new(
+        let mut user2 = Executor::<_, KcSpake2>::new(
             rand::thread_rng(),
             pwfile2,
             ssid,
@@ -219,7 +224,8 @@ mod test {
         let msg2 = user2.step_2(&msg1);
         let msg3 = user1.step_3(&msg2);
         let msg4 = user2.step_4(&msg3);
-        user1.step_5(&msg4);
+        let msg5 = user1.step_5(&msg4);
+        user2.step_6(&msg5);
 
         assert_eq!(user1.finalize(), user2.finalize());
     }
