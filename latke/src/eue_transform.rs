@@ -48,15 +48,12 @@ impl<I: IdentityBasedKeyExchange> Eue<I> {
         ssid: Ssid,
         mpk: I::MainPubkey,
         cert: I::Certificate,
-        usk: I::MainPrivkey,
+        usk: I::UserPrivkey,
         role: PartyRole,
-        aux: (I::AuxSessData, [u8; 32]),
+        initial_key: [u8; 32],
     ) -> Self {
-        // Unpack the aux input
-        let (underlying_aux, initial_key) = aux;
-
         // Start the new underlying session
-        let sess = I::new_session(rng, ssid, mpk, cert, usk, role, underlying_aux);
+        let sess = I::new_session(rng, ssid, mpk, cert, usk, role);
 
         // Derive the initial chain key and message keys
         let mut chain_key = [0u8; 32];
@@ -174,7 +171,7 @@ mod test {
             cert1,
             usk1,
             PartyRole::Initiator,
-            ((), initial_key),
+            initial_key,
         );
         let mut user2 = EueSigmaR::new_session(
             &mut rng,
@@ -183,7 +180,7 @@ mod test {
             cert2,
             usk2,
             PartyRole::Responder,
-            ((), initial_key),
+            initial_key,
         );
 
         // Run the session until completion

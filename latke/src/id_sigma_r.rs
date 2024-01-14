@@ -128,8 +128,6 @@ impl IdentityBasedKeyExchange for IdSigmaR {
     type Certificate = SigmaCert;
     type Error = SigmaError;
 
-    type AuxSessData = ();
-
     fn gen_main_keypair<R: RngCore + CryptoRng>(mut rng: R) -> (SigPubkey, SigPrivkey) {
         // Generate random coins and use them for generation. We have to do this because gen_sig_keypair uses its own RNG
         let mut coins = KeygenCoins::default();
@@ -159,7 +157,6 @@ impl IdentityBasedKeyExchange for IdSigmaR {
         cert: SigmaCert,
         usk: SigPrivkey,
         role: PartyRole,
-        _aux: (),
     ) -> Self {
         let mut my_nonce = Nonce::default();
         rng.fill_bytes(&mut my_nonce);
@@ -497,7 +494,6 @@ mod test {
             cert1,
             usk1,
             PartyRole::Initiator,
-            (),
         );
         let mut user2 = IdSigmaR::new_session(
             &mut rng,
@@ -506,7 +502,6 @@ mod test {
             cert2,
             usk2,
             PartyRole::Responder,
-            (),
         );
 
         // Run the session until completion

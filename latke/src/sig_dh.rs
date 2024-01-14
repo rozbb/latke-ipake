@@ -1,9 +1,8 @@
-//! Defines the SIG-DH AKE protocol by [Canetti and Krawczyk](https://eprint.iacr.org/2002/059), with the AKE-to-IBKE transform applied
-
-use crate::{Id, MyKdf, PartyRole, SessKey, Ssid};
+/// Defines the signed Diffie-Hellman protocol by [Bergsma et al.](https://eprint.iacr.org/2015/015), with the AKE-to-IBKE transform applied
+use crate::{Id, IdentityBasedKeyExchange, MyKdf, PartyRole, SessKey, Ssid};
 
 use ed25519_dalek::{
-    ed25519::SignatureEncoding, Signature, Signer, SigningKey as SigPrivkey, Verifier,
+    Signature, SignatureError, Signer, SigningKey as SigPrivkey, Verifier,
     VerifyingKey as SigPubkey,
 };
 use rand_core::{CryptoRng, RngCore};
@@ -14,6 +13,7 @@ use x25519_dalek::{
 type UserPubkey = (SigPubkey, DhPubkey);
 type UserPrivkey = (SigPrivkey, DhPrivkey);
 
+/// The identity certificate for use in the signed Diffie-Hellman protocol
 struct SigDhCert {
     id: Id,
     upk: UserPubkey,
@@ -47,50 +47,58 @@ impl SigDhCert {
             upk_sig: Signature::from_bytes(sig.try_into().unwrap()),
         }
     }
+
+    fn size() -> usize {
+        Id::default().len() + 32 + 32 + Signature::BYTE_SIZE
+    }
 }
 
-struct SigDh {
+/// The signed Diffie-Hellman protocol by [Bergsma et al.](https://eprint.iacr.org/2015/015), with the AKE-to-IBKE transform applied
+struct IdSigDh {
     ssid: Ssid,
     cert: SigDhCert,
     mpk: SigPubkey,
     usk: UserPrivkey,
-    other_id: Id,
 
     // Ephemeral values, determined during the protocol
     eph_sk: Option<DhEphemeralSecret>,
     eph_pk: Option<DhPubkey>,
+
     output_key: Option<SessKey>,
+    output_id: Option<Id>,
 
     next_step: usize,
 }
 
-impl SigDh {
-    fn new(
+impl IdentityBasedKeyExchange for IdSigDh {
+    type MainPubkey = SigPubkey;
+    type MainPrivkey = SigPrivkey;
+    type UserPubkey = UserPubkey;
+    type UserPrivkey = UserPrivkey;
+    type Certificate = SigDhCert;
+    type Error = SignatureError;
+
+    fn new_session<R: RngCore + CryptoRng>(
+        _rng: R,
         ssid: Ssid,
         mpk: SigPubkey,
         cert: SigDhCert,
         usk: UserPrivkey,
         role: PartyRole,
-        other_id: Id,
     ) -> Self {
         let next_step = if role == PartyRole::Initiator { 0 } else { 1 };
-        SigDh {
+        IdSigDh {
             ssid,
             cert,
             mpk,
             usk,
-            other_id,
-            output_key: None,
             eph_sk: None,
             eph_pk: None,
+            output_key: None,
+            output_id: None,
             next_step,
         }
     }
-
-    fn finalize(&self) -> SessKey {
-        self.output_key.unwrap()
-    }
-
     fn gen_main_keypair<R: RngCore + CryptoRng>(mut rng: R) -> (SigPubkey, SigPrivkey) {
         let sig_sk = SigPrivkey::generate(&mut rng);
         let sig_pk = SigPubkey::from(&sig_sk);
@@ -119,6 +127,10 @@ impl SigDh {
             upk: upk.clone(),
             upk_sig,
         }
+    }
+
+    fn finalize(&self) -> (Id, SessKey) {
+        (self.output_id.unwrap(), self.output_key.unwrap())
     }
 
     fn run<R: RngCore + CryptoRng>(
@@ -176,10 +188,9 @@ impl SigDh {
                     .concat(),
                     &incoming_cert.upk_sig,
                 )?;
-                // Verify that the ID is the same as the one we expect
-                assert_eq!(incoming_cert.id, self.other_id);
-                // If that all works out, then we can use the other user's pubkey
+                // If that all works out, then we can use the other user's pubkey and ID
                 let other_upk = incoming_cert.upk;
+                self.output_id = Some(incoming_cert.id);
 
                 // Verify the signature over the ephemeral key
                 other_upk.0.verify(
@@ -249,10 +260,9 @@ impl SigDh {
                     .concat(),
                     &incoming_cert.upk_sig,
                 )?;
-                // Verify that the ID is the same as the one we expect
-                assert_eq!(incoming_cert.id, self.other_id);
-                // If that all works out, then we can use the other user's pubkey
+                // If that all works out, then we can use the other user's pubkey and ID
                 let other_upk = incoming_cert.upk;
+                self.output_id = Some(incoming_cert.id);
 
                 // Verify the signature over the ephemeral key
                 other_upk.0.verify(
@@ -295,6 +305,24 @@ impl SigDh {
 
         Ok(out)
     }
+
+    fn run_sim(&mut self) -> Option<usize> {
+        let out = match self.next_step {
+            0 | 1 => {
+                // Sends the ephemeral pubkey, a signature over it, and the certificate
+                Some(32 + Signature::BYTE_SIZE + SigDhCert::size())
+            }
+            2 => {
+                // All done
+                None
+            }
+            _ => panic!("protocol already finished"),
+        };
+
+        self.next_step += 2;
+
+        out
+    }
 }
 
 #[cfg(test)]
@@ -307,26 +335,33 @@ mod test {
     fn sig_dh_correctness() {
         let mut rng = rand::thread_rng();
 
-        let (mpk, msk) = SigDh::gen_main_keypair(&mut rng);
+        let (mpk, msk) = IdSigDh::gen_main_keypair(&mut rng);
 
         let id1 = rng.gen();
         let id2 = rng.gen();
-        let (upk1, usk1) = SigDh::gen_user_keypair(&mut rng);
-        let (upk2, usk2) = SigDh::gen_user_keypair(&mut rng);
+        let (upk1, usk1) = IdSigDh::gen_user_keypair(&mut rng);
+        let (upk2, usk2) = IdSigDh::gen_user_keypair(&mut rng);
 
-        let cert1 = SigDh::extract(&msk, &id1, &upk1);
-        let cert2 = SigDh::extract(&msk, &id2, &upk2);
+        let cert1 = IdSigDh::extract(&msk, &id1, &upk1);
+        let cert2 = IdSigDh::extract(&msk, &id2, &upk2);
 
         let ssid = rng.gen();
 
-        let mut user1 = SigDh::new(ssid, mpk, cert1, usk1, PartyRole::Initiator, id2);
-        let mut user2 = SigDh::new(ssid, mpk, cert2, usk2, PartyRole::Responder, id1);
+        let mut user1 =
+            IdSigDh::new_session(&mut rng, ssid, mpk, cert1, usk1, PartyRole::Initiator);
+        let mut user2 =
+            IdSigDh::new_session(&mut rng, ssid, mpk, cert2, usk2, PartyRole::Responder);
 
         let msg1 = user1.run(&mut rng, &[]).unwrap().unwrap();
         let msg2 = user2.run(&mut rng, &msg1).unwrap().unwrap();
         let msg3 = user1.run(&mut rng, &msg2).unwrap();
 
+        let (user1_interlocutor, user1_key) = user1.finalize();
+        let (user2_interlocutor, user2_key) = user2.finalize();
+
         assert!(msg3.is_none());
-        assert_eq!(user1.finalize(), user2.finalize());
+        assert!(user1_interlocutor == id2);
+        assert!(user2_interlocutor == id1);
+        assert_eq!(user1_key, user2_key);
     }
 }

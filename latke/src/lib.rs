@@ -62,9 +62,6 @@ trait IdentityBasedKeyExchange {
     type Certificate;
     type Error;
 
-    /// Auxiliary data that the protocol might want for creating a new session. Our Encrypt-and-Unconditionally-Execute transform uses this to take in the encryption key.
-    type AuxSessData;
-
     /// Generates the main keypair for the key generation center (KGC)
     fn gen_main_keypair<R: RngCore + CryptoRng>(rng: R) -> (Self::MainPubkey, Self::MainPrivkey);
 
@@ -80,9 +77,8 @@ trait IdentityBasedKeyExchange {
         ssid: Ssid,
         mpk: Self::MainPubkey,
         cert: Self::Certificate,
-        usk: Self::MainPrivkey,
+        usk: Self::UserPrivkey,
         role: PartyRole,
-        aux: Self::AuxSessData,
     ) -> Self;
 
     /// Runs the next step of the protocol. `incoming_msg` MUST be empty for the first step.
