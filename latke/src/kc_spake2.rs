@@ -16,6 +16,7 @@ pub struct KcSpake2 {
     // We need to store this because creating a SPAKE2 state immediately creates the first message
     first_outgoing_message: Vec<u8>,
     next_step: usize,
+    done: bool,
     /// The output of this PAKE
     output_key: Option<SessKey>,
     /// The two MACs over the transcript
@@ -45,10 +46,15 @@ impl Pake for KcSpake2 {
             pake_state: Some(pake_state),
             first_outgoing_message: outgoing_msg,
             next_step,
+            done: false,
             output_key: None,
             macs: None,
             password: password.to_vec(),
         }
+    }
+
+    fn is_done(&self) -> bool {
+        self.done
     }
 
     fn run(&mut self, incoming_msg: &[u8]) -> Result<Option<Vec<u8>>, Self::Error> {
@@ -122,6 +128,9 @@ impl Pake for KcSpake2 {
                     return Err(MacError);
                 }
 
+                // After sending this, we're done
+                self.done = true;
+
                 // Send the MAC
                 Some(mac0.to_vec())
             }
@@ -131,6 +140,8 @@ impl Pake for KcSpake2 {
                 if !bool::from(self.macs.unwrap().0.ct_eq(&incoming_mac0)) {
                     return Err(MacError);
                 }
+
+                self.done = true;
 
                 None
             }

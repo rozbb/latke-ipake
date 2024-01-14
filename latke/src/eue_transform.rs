@@ -7,7 +7,7 @@ use crate::{
 };
 
 /// The Encrypt-and-Unconditionally-Execute (EUE) transform from LATKE. This takes an IBKE and an encryption key and produces a new IBKE whose messages are all encrypted.
-struct Eue<I>
+pub(crate) struct Eue<I>
 where
     I: IdentityBasedKeyExchange,
 {
@@ -74,6 +74,10 @@ impl<I: IdentityBasedKeyExchange> Eue<I> {
             real_mode: true,
             _marker: core::marker::PhantomData,
         }
+    }
+
+    pub fn is_done(&self) -> bool {
+        self.sess.is_done()
     }
 
     pub fn run<R: RngCore + CryptoRng>(

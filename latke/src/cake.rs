@@ -59,6 +59,7 @@ pub struct Cake {
     eph_sk: Option<INDCPASecretKey>,
     sess_key: Option<SessKey>,
     next_step: usize,
+    done: bool,
 }
 
 impl Pake for Cake {
@@ -75,11 +76,16 @@ impl Pake for Cake {
             eph_sk: None,
             sess_key: None,
             next_step,
+            done: false,
         }
     }
 
     fn finalize(&self) -> SessKey {
         self.sess_key.unwrap()
+    }
+
+    fn is_done(&self) -> bool {
+        self.done
     }
 
     fn run(&mut self, incoming_msg: &[u8]) -> Result<Option<Vec<u8>>, Self::Error> {
@@ -108,14 +114,16 @@ impl Pake for Cake {
                 lioness_decrypt(0x00, &self.ssid, &self.password, &mut eph_pk).unwrap();
                 let eph_pk = INDCPAPublicKey::from_bytes(&eph_pk);
 
-                // Encapsulate to the ephemeral pubkey
+                // Encapsulate to the ephemeral pubkey. After this message, we're done.
                 let (shared_secret, mut encapped_key) = kem_encap(&eph_pk);
                 self.sess_key = Some(*shared_secret.as_bytes());
+                self.done = true;
 
                 // Encrypt the encapsulated key with the password and SSID
                 lioness_encrypt(0x01, &self.ssid, &self.password, encapped_key.as_mut()).unwrap();
                 let enc_encapped_key = encapped_key;
 
+                // Send the encrypted encapped key
                 Some(enc_encapped_key.as_bytes().to_vec())
             }
             // Receive the encapsulated key, decrypt it, and decapsulate it
@@ -128,6 +136,7 @@ impl Pake for Cake {
                 // Decapsulate
                 let shared_secret = kem_decap(&encapped_key, self.eph_sk.as_ref().unwrap());
                 self.sess_key = Some(*shared_secret.as_bytes());
+                self.done = true;
 
                 None
             }

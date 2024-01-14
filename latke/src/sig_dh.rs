@@ -1,5 +1,5 @@
 /// Defines the signed Diffie-Hellman protocol by [Bergsma et al.](https://eprint.iacr.org/2015/015), with the AKE-to-IBKE transform applied
-use crate::{Id, IdentityBasedKeyExchange, MyKdf, PartyRole, SessKey, Ssid};
+use crate::{AsBytes, Id, IdentityBasedKeyExchange, MyKdf, PartyRole, SessKey, Ssid};
 
 use ed25519_dalek::{
     Signature, SignatureError, Signer, SigningKey as SigPrivkey, Verifier,
@@ -14,7 +14,8 @@ type UserPubkey = (SigPubkey, DhPubkey);
 type UserPrivkey = (SigPrivkey, DhPrivkey);
 
 /// The identity certificate for use in the signed Diffie-Hellman protocol
-struct SigDhCert {
+#[derive(Clone)]
+pub struct SigDhCert {
     id: Id,
     upk: UserPubkey,
     upk_sig: Signature,
@@ -53,8 +54,14 @@ impl SigDhCert {
     }
 }
 
+impl AsBytes for SigPubkey {
+    fn as_bytes(&self) -> &[u8] {
+        self.as_ref()
+    }
+}
+
 /// The signed Diffie-Hellman protocol by [Bergsma et al.](https://eprint.iacr.org/2015/015), with the AKE-to-IBKE transform applied
-struct IdSigDh {
+pub struct IdSigDh {
     ssid: Ssid,
     cert: SigDhCert,
     mpk: SigPubkey,
@@ -68,6 +75,7 @@ struct IdSigDh {
     output_id: Option<Id>,
 
     next_step: usize,
+    done: bool,
 }
 
 impl IdentityBasedKeyExchange for IdSigDh {
@@ -97,8 +105,10 @@ impl IdentityBasedKeyExchange for IdSigDh {
             output_key: None,
             output_id: None,
             next_step,
+            done: false,
         }
     }
+
     fn gen_main_keypair<R: RngCore + CryptoRng>(mut rng: R) -> (SigPubkey, SigPrivkey) {
         let sig_sk = SigPrivkey::generate(&mut rng);
         let sig_pk = SigPubkey::from(&sig_sk);
@@ -127,6 +137,10 @@ impl IdentityBasedKeyExchange for IdSigDh {
             upk: upk.clone(),
             upk_sig,
         }
+    }
+
+    fn is_done(&self) -> bool {
+        self.done
     }
 
     fn finalize(&self) -> (Id, SessKey) {
@@ -228,6 +242,7 @@ impl IdentityBasedKeyExchange for IdSigDh {
                 )
                 .unwrap();
                 self.output_key = Some(sess_key);
+                self.done = true;
 
                 // Send the ephemeral pubkey, the signature, and the cert
                 Some(
@@ -294,6 +309,7 @@ impl IdentityBasedKeyExchange for IdSigDh {
                 )
                 .unwrap();
                 self.output_key = Some(sess_key);
+                self.done = true;
 
                 None
             }
@@ -308,12 +324,18 @@ impl IdentityBasedKeyExchange for IdSigDh {
 
     fn run_sim(&mut self) -> Option<usize> {
         let out = match self.next_step {
-            0 | 1 => {
+            0 => {
                 // Sends the ephemeral pubkey, a signature over it, and the certificate
+                Some(32 + Signature::BYTE_SIZE + SigDhCert::size())
+            }
+            1 => {
+                // Same as above
+                self.done = true;
                 Some(32 + Signature::BYTE_SIZE + SigDhCert::size())
             }
             2 => {
                 // All done
+                self.done = true;
                 None
             }
             _ => panic!("protocol already finished"),

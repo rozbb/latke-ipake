@@ -21,6 +21,7 @@ ctr = "0.9.2"
 subtle = "2.5.0"
 ed25519-dalek = { version = "2.1.0", features = ["rand_core"] }
 x25519-dalek = { version = "2.0.0", features = ["static_secrets", "reusable_secrets"] }
+rand_chacha = "0.3.1"
 
 [dev-dependencies]
 criterion = "0.3"

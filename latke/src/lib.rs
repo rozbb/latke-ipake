@@ -11,6 +11,7 @@ pub mod chip;
 mod eue_transform;
 pub mod id_sigma_r;
 pub mod kc_spake2;
+pub mod latke;
 pub mod sig_dh;
 
 pub type MyHash256 = Blake2b<U32>;
@@ -48,6 +49,9 @@ trait Pake {
     /// Returns the next message to send, or `Ok(None)` if the protocol successfully completed.
     fn run(&mut self, msg: &[u8]) -> Result<Option<Vec<u8>>, Self::Error>;
 
+    /// Returns whether the protocol has completed
+    fn is_done(&self) -> bool;
+
     /// Returns the session key if the protocol successfully completed. Panics otherwise.
     fn finalize(&self) -> SessKey;
 }
@@ -55,12 +59,12 @@ trait Pake {
 /// An identity based key exchange protocol in the style of the AKE-to-IBKE transform described in LATKE.
 /// The only thing of note is that users generate their own user keypair, and `extract` takes the user public key as auxiliary data.
 trait IdentityBasedKeyExchange {
-    type MainPubkey;
+    type MainPubkey: Clone + AsBytes;
     type MainPrivkey;
     type UserPubkey;
-    type UserPrivkey;
-    type Certificate;
-    type Error;
+    type UserPrivkey: Clone;
+    type Certificate: Clone;
+    type Error: core::fmt::Debug;
 
     /// Generates the main keypair for the key generation center (KGC)
     fn gen_main_keypair<R: RngCore + CryptoRng>(rng: R) -> (Self::MainPubkey, Self::MainPrivkey);
@@ -91,6 +95,13 @@ trait IdentityBasedKeyExchange {
     /// Simulates running the next step of the protocol. This returns the size of the message that would be sent, and internally updates the state to the next step
     fn run_sim(&mut self) -> Option<usize>;
 
+    /// Returns whether the protocol has completed. The protocol counts as completed if either the last `run` OR `run_sim` has executed
+    fn is_done(&self) -> bool;
+
     /// Finalizes the protocol and returns the session key and the ID of the other party
     fn finalize(&self) -> (Id, SessKey);
+}
+
+trait AsBytes {
+    fn as_bytes(&self) -> &[u8];
 }

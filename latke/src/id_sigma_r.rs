@@ -54,8 +54,15 @@ impl From<VerificationError> for SigmaError {
     }
 }
 
+impl crate::AsBytes for SigPubkey {
+    fn as_bytes(&self) -> &[u8] {
+        <SigPubkey as pqcrypto_traits::sign::PublicKey>::as_bytes(&self)
+    }
+}
+
 /// A certificate is a signed statement that a party with a given ID has a certain public key.
 /// For our PQ Sigma protocol, the signature is a Dilithium signature, and the public key is a Dilithium public key.
+#[derive(Clone)]
 pub(crate) struct SigmaCert {
     id: Id,
     upk: SigPubkey,
@@ -94,7 +101,7 @@ impl SigmaCert {
 }
 
 /// The SIGMA-R protocol described in the [SIGMA paper](https://iacr.org/archive/crypto2003/27290399/27290399.pdf), modified  by [Peikert](https://eprint.iacr.org/2014/070) to use KEMs, and transformed using the AKE-to-IBKE transform describe in LATKE
-pub(crate) struct IdSigmaR {
+pub struct IdSigmaR {
     /// The SSID for the session. For consistency in benches we assume this is negotiated beforehand. But SIGMA does define a way to negotiate this.
     ssid: Ssid,
     /// The nonces for the two parties
@@ -118,6 +125,7 @@ pub(crate) struct IdSigmaR {
     output_key: Option<SessKey>,
 
     next_step: usize,
+    done: bool,
 }
 
 impl IdentityBasedKeyExchange for IdSigmaR {
@@ -186,7 +194,12 @@ impl IdentityBasedKeyExchange for IdSigmaR {
             output_key: None,
 
             next_step,
+            done: false,
         }
+    }
+
+    fn is_done(&self) -> bool {
+        self.done
     }
 
     fn finalize(&self) -> (Id, SessKey) {
@@ -203,12 +216,18 @@ impl IdentityBasedKeyExchange for IdSigmaR {
                 // Sends a nonce followed by an encapsulated key
                 Some(Nonce::default().len() + BYTES_CCA_DEC)
             }
-            2 | 3 => {
+            2 => {
                 // Sends an authenticated ciphertext of (sig, mac, cert). So include that length, plus the length of the authenticated encryption tag
+                Some(sig_size() + 32 + SigmaCert::size() + crate::auth_enc::TAGLEN)
+            }
+            3 => {
+                // Same as above
+                self.done = true;
                 Some(sig_size() + 32 + SigmaCert::size() + crate::auth_enc::TAGLEN)
             }
             4 => {
                 // All done
+                self.done = true;
                 None
             }
             _ => panic!("protocol already finished"),
@@ -404,6 +423,9 @@ impl IdentityBasedKeyExchange for IdSigmaR {
                     &[sig.as_bytes(), mac.as_slice(), &my_cert_bytes].concat(),
                 );
 
+                // This is the last message for this party
+                self.done = true;
+
                 // Send the ciphertext
                 Some(ciphertext)
             }
@@ -447,6 +469,7 @@ impl IdentityBasedKeyExchange for IdSigmaR {
                     .chain_update(self.output_id.as_ref().unwrap())
                     .verify_slice(incoming_mac)?;
 
+                self.done = true;
                 None
             }
             _ => {
