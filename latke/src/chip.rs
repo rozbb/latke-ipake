@@ -2,7 +2,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::{Id, Pake, PartyRole, SessKey, Ssid};
+use crate::{Id, MyHash512, Pake, PartyRole, SessKey, Ssid};
 
 use blake2::{digest::MacError, Blake2b512};
 use curve25519_dalek::{
@@ -114,7 +114,7 @@ impl<R: RngCore + CryptoRng, P: Pake> Executor<R, P> {
             .unwrap();
 
         let other_h = Scalar::from_hash(
-            Blake2b512::new()
+            MyHash512::new()
                 .chain_update([0x02])
                 .chain_update(&self.other_id)
                 .chain_update(other_X_bytes),
@@ -159,7 +159,8 @@ impl<R: RngCore + CryptoRng, P: Pake> Executor<R, P> {
                 let ibke_out = self.ibke_step_2(incoming_msg);
 
                 // Initialize the PAKE and send the first message
-                let mut pake_state = P::new(&mut self.rng, PartyRole::Initiator, &ibke_out);
+                let mut pake_state =
+                    P::new(&mut self.rng, self.ssid, &ibke_out, PartyRole::Initiator);
                 let pake_msg = pake_state.run(&[])?;
                 self.pake_state = Some(pake_state);
 
@@ -170,7 +171,8 @@ impl<R: RngCore + CryptoRng, P: Pake> Executor<R, P> {
                 let ibke_out = self.ibke_step_2(&last_msg);
 
                 // Initialize the PAKE, process the first message, and send the second
-                let mut pake_state = P::new(&mut self.rng, PartyRole::Responder, &ibke_out);
+                let mut pake_state =
+                    P::new(&mut self.rng, self.ssid, &ibke_out, PartyRole::Responder);
                 let pake_msg = pake_state.run(incoming_msg)?;
                 self.pake_state = Some(pake_state);
 

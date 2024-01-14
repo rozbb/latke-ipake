@@ -1,5 +1,5 @@
 //! Implements the KC-SPAKE2 PAKE by [Shoup](https://eprint.iacr.org/2020/313)
-use crate::{MyKdf, MyMac, Pake, PartyRole, SessKey};
+use crate::{MyKdf, MyMac, Pake, PartyRole, SessKey, Ssid};
 
 use blake2::digest::{MacError, OutputSizeUser};
 use hkdf::hmac::digest::{typenum::Unsigned, Mac};
@@ -26,10 +26,15 @@ pub struct KcSpake2 {
 impl Pake for KcSpake2 {
     type Error = MacError;
 
-    fn new<R: RngCore + CryptoRng>(mut rng: R, role: PartyRole, password: &[u8]) -> Self {
+    fn new<R: RngCore + CryptoRng>(
+        mut rng: R,
+        ssid: Ssid,
+        password: &[u8],
+        role: PartyRole,
+    ) -> Self {
         let (pake_state, outgoing_msg) = Spake2::<Ed25519Group>::start_symmetric_with_rng(
             &Password::new(password),
-            &Identity::new(PROTO_ID),
+            &Identity::new(&ssid),
             &mut rng,
         );
 

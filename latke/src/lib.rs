@@ -1,4 +1,4 @@
-use blake2::Blake2b;
+use blake2::{Blake2b, Blake2b512};
 use hkdf::{
     hmac::{digest::consts::U32, SimpleHmac},
     SimpleHkdf,
@@ -12,9 +12,10 @@ mod eue_transform;
 pub mod id_sigma_r;
 pub mod kc_spake2;
 
-pub type MyHash = Blake2b<U32>;
-pub type MyKdf = SimpleHkdf<MyHash>;
-pub type MyMac = SimpleHmac<MyHash>;
+pub type MyHash256 = Blake2b<U32>;
+pub type MyHash512 = Blake2b512;
+pub type MyKdf = SimpleHkdf<MyHash256>;
+pub type MyMac = SimpleHmac<MyHash256>;
 
 /// ID strings are any bytestring. We'll limit it to 32 bytes here.
 pub type Id = [u8; 32];
@@ -40,7 +41,7 @@ trait Pake {
     type Error: core::fmt::Debug;
 
     /// Makes a new PAKE session
-    fn new<R: RngCore + CryptoRng>(rng: R, role: PartyRole, password: &[u8]) -> Self;
+    fn new<R: RngCore + CryptoRng>(rng: R, ssid: Ssid, password: &[u8], role: PartyRole) -> Self;
 
     /// Runs the next step of the algorithm, given the previous message. If this is the first step of the initiator, then `msg` MUST be `[]`.
     /// Returns the next message to send, or `Ok(None)` if the protocol successfully completed.
