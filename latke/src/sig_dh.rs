@@ -11,22 +11,55 @@ use x25519_dalek::{
     PublicKey as DhPubkey, ReusableSecret as DhEphemeralSecret, StaticSecret as DhPrivkey,
 };
 
+type UserPubkey = (SigPubkey, DhPubkey);
+type UserPrivkey = (SigPrivkey, DhPrivkey);
+
 struct SigDhCert {
-    //id: Id,
-    upk: (SigPubkey, DhPubkey),
-    //upk_sig: Signature,
+    id: Id,
+    upk: UserPubkey,
+    upk_sig: Signature,
+}
+
+impl SigDhCert {
+    fn to_bytes(&self) -> Vec<u8> {
+        [
+            &self.id[..],
+            self.upk.0.as_bytes().as_slice(),
+            self.upk.1.as_bytes().as_slice(),
+            self.upk_sig.to_bytes().as_slice(),
+        ]
+        .concat()
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Self {
+        let rest = bytes;
+        let (id, rest) = rest.split_at(Id::default().len());
+        let (sig_upk, rest) = rest.split_at(32);
+        let (dh_upk, rest) = rest.split_at(32);
+        let sig = rest;
+
+        SigDhCert {
+            id: id.try_into().unwrap(),
+            upk: (
+                SigPubkey::from_bytes(sig_upk.try_into().unwrap()).unwrap(),
+                DhPubkey::from(<[u8; 32]>::try_from(dh_upk).unwrap()),
+            ),
+            upk_sig: Signature::from_bytes(sig.try_into().unwrap()),
+        }
+    }
 }
 
 struct SigDh {
     ssid: Ssid,
     cert: SigDhCert,
-    usk: (SigPrivkey, DhPrivkey),
-    other_upk: (SigPubkey, DhPubkey),
+    mpk: SigPubkey,
+    usk: UserPrivkey,
+    other_id: Id,
 
-    output_key: Option<SessKey>,
-
+    // Ephemeral values, determined during the protocol
     eph_sk: Option<DhEphemeralSecret>,
     eph_pk: Option<DhPubkey>,
+    output_key: Option<SessKey>,
 
     next_step: usize,
 }
@@ -34,18 +67,20 @@ struct SigDh {
 impl SigDh {
     fn new(
         ssid: Ssid,
+        mpk: SigPubkey,
         cert: SigDhCert,
-        usk: (SigPrivkey, DhPrivkey),
-        other_upk: (SigPubkey, DhPubkey),
+        usk: UserPrivkey,
         role: PartyRole,
+        other_id: Id,
     ) -> Self {
         let next_step = if role == PartyRole::Initiator { 0 } else { 1 };
         SigDh {
             ssid,
             cert,
+            mpk,
             usk,
+            other_id,
             output_key: None,
-            other_upk,
             eph_sk: None,
             eph_pk: None,
             next_step,
@@ -56,14 +91,34 @@ impl SigDh {
         self.output_key.unwrap()
     }
 
-    fn gen_user_keypair<R: RngCore + CryptoRng>(
-        mut rng: R,
-    ) -> ((SigPubkey, DhPubkey), (SigPrivkey, DhPrivkey)) {
+    fn gen_main_keypair<R: RngCore + CryptoRng>(mut rng: R) -> (SigPubkey, SigPrivkey) {
+        let sig_sk = SigPrivkey::generate(&mut rng);
+        let sig_pk = SigPubkey::from(&sig_sk);
+        (sig_pk, sig_sk)
+    }
+
+    fn gen_user_keypair<R: RngCore + CryptoRng>(mut rng: R) -> (UserPubkey, UserPrivkey) {
         let sig_sk = SigPrivkey::generate(&mut rng);
         let sig_pk = SigPubkey::from(&sig_sk);
         let dh_sk = DhPrivkey::random_from_rng(&mut rng);
         let dh_pk = DhPubkey::from(&dh_sk);
         ((sig_pk, dh_pk), (sig_sk, dh_sk))
+    }
+
+    fn extract(msk: &SigPrivkey, id: &Id, upk: &UserPubkey) -> SigDhCert {
+        let upk_sig = msk.sign(
+            &[
+                &id[..],
+                upk.0.as_bytes().as_slice(),
+                upk.1.as_bytes().as_slice(),
+            ]
+            .concat(),
+        );
+        SigDhCert {
+            id: id.clone(),
+            upk: upk.clone(),
+            upk_sig,
+        }
     }
 
     fn run<R: RngCore + CryptoRng>(
@@ -88,19 +143,46 @@ impl SigDh {
                     .0
                     .sign(&[&[0x00], self.ssid.as_slice(), eph_pk.as_bytes()].concat());
 
-                // Send the ephemeral pubkey and the signature
-                Some([eph_pk.as_bytes().as_slice(), &sig.to_bytes()].concat())
+                // Send the ephemeral pubkey, the signature, and the certificate
+                Some(
+                    [
+                        eph_pk.as_bytes().as_slice(),
+                        &sig.to_bytes(),
+                        &self.cert.to_bytes(),
+                    ]
+                    .concat(),
+                )
             }
             // Process the keyshare with signature and send a new keyshare and signature
             1 => {
-                // Receive the ephemeral pubkey and the signature
-                let (incoming_eph_pk_bytes, incoming_sig_bytes) = incoming_msg.split_at(32);
-                let incoming_eph_pk_bytes: [u8; 32] = incoming_eph_pk_bytes.try_into().unwrap();
-                let incoming_eph_pk = DhPubkey::from(incoming_eph_pk_bytes);
-                let incoming_sig = Signature::from_bytes(incoming_sig_bytes.try_into().unwrap());
+                // Receive the ephemeral pubkey, the signature, and the cert
+                let rest = incoming_msg;
+                let (incoming_eph_pk_bytes, rest) = rest.split_at(32);
+                let (incoming_sig_bytes, rest) = rest.split_at(Signature::BYTE_SIZE);
+                let incoming_cert_bytes = rest;
 
-                // Verify the signature
-                self.other_upk.0.verify(
+                let incoming_eph_pk =
+                    DhPubkey::from(<[u8; 32]>::try_from(incoming_eph_pk_bytes).unwrap());
+                let incoming_sig = Signature::from_bytes(incoming_sig_bytes.try_into().unwrap());
+                let incoming_cert = SigDhCert::from_bytes(incoming_cert_bytes);
+
+                // Verify the certificate
+                self.mpk.verify(
+                    &[
+                        &incoming_cert.id[..],
+                        incoming_cert.upk.0.as_bytes().as_slice(),
+                        incoming_cert.upk.1.as_bytes().as_slice(),
+                    ]
+                    .concat(),
+                    &incoming_cert.upk_sig,
+                )?;
+                // Verify that the ID is the same as the one we expect
+                assert_eq!(incoming_cert.id, self.other_id);
+                // If that all works out, then we can use the other user's pubkey
+                let other_upk = incoming_cert.upk;
+
+                // Verify the signature over the ephemeral key
+                other_upk.0.verify(
                     &[&[0x00], self.ssid.as_slice(), incoming_eph_pk.as_bytes()].concat(),
                     &incoming_sig,
                 )?;
@@ -116,9 +198,9 @@ impl SigDh {
                     .sign(&[&[0x01], self.ssid.as_slice(), eph_pk.as_bytes()].concat());
 
                 // Calculate the DH shared secrets and extract the session key from all the shared secrets and the transcript
-                let z1 = self.usk.1.diffie_hellman(&self.other_upk.1);
+                let z1 = self.usk.1.diffie_hellman(&other_upk.1);
                 let z2 = self.usk.1.diffie_hellman(&incoming_eph_pk);
-                let z3 = eph_sk.diffie_hellman(&self.other_upk.1);
+                let z3 = eph_sk.diffie_hellman(&other_upk.1);
                 let z4 = eph_sk.diffie_hellman(&incoming_eph_pk);
                 let (_, hk) = MyKdf::extract(
                     None,
@@ -136,29 +218,51 @@ impl SigDh {
                 .unwrap();
                 self.output_key = Some(sess_key);
 
-                // Send the ephemeral pubkey and the signature
-                Some([eph_pk.as_bytes().as_slice(), &sig.to_bytes()].concat())
+                // Send the ephemeral pubkey, the signature, and the cert
+                Some(
+                    [
+                        eph_pk.as_bytes().as_slice(),
+                        &sig.to_bytes(),
+                        &self.cert.to_bytes(),
+                    ]
+                    .concat(),
+                )
             }
             2 => {
-                // Receive the ephemeral pubkey and the signature
-                let (incoming_eph_pk_bytes, incoming_sig_bytes) = incoming_msg.split_at(32);
-                let incoming_eph_pk_bytes: [u8; 32] = incoming_eph_pk_bytes.try_into().unwrap();
-                let incoming_eph_pk = DhPubkey::from(incoming_eph_pk_bytes);
-                let incoming_sig = Signature::from_bytes(incoming_sig_bytes.try_into().unwrap());
+                let rest = incoming_msg;
+                let (incoming_eph_pk_bytes, rest) = rest.split_at(32);
+                let (incoming_sig_bytes, rest) = rest.split_at(Signature::BYTE_SIZE);
+                let incoming_cert_bytes = rest;
 
-                // Verify the signature
-                self.other_upk.0.verify(
+                let incoming_eph_pk =
+                    DhPubkey::from(<[u8; 32]>::try_from(incoming_eph_pk_bytes).unwrap());
+                let incoming_sig = Signature::from_bytes(incoming_sig_bytes.try_into().unwrap());
+                let incoming_cert = SigDhCert::from_bytes(incoming_cert_bytes);
+
+                // Verify the certificate
+                self.mpk.verify(
+                    &[
+                        &incoming_cert.id[..],
+                        incoming_cert.upk.0.as_bytes().as_slice(),
+                        incoming_cert.upk.1.as_bytes().as_slice(),
+                    ]
+                    .concat(),
+                    &incoming_cert.upk_sig,
+                )?;
+                // Verify that the ID is the same as the one we expect
+                assert_eq!(incoming_cert.id, self.other_id);
+                // If that all works out, then we can use the other user's pubkey
+                let other_upk = incoming_cert.upk;
+
+                // Verify the signature over the ephemeral key
+                other_upk.0.verify(
                     &[&[0x01], self.ssid.as_slice(), incoming_eph_pk.as_bytes()].concat(),
                     &incoming_sig,
                 )?;
 
                 // Calculate the DH shared secrets and extract the session key from all the shared secrets and the transcript
-                let z1 = self.usk.1.diffie_hellman(&self.other_upk.1);
-                let z2 = self
-                    .eph_sk
-                    .as_ref()
-                    .unwrap()
-                    .diffie_hellman(&self.other_upk.1);
+                let z1 = self.usk.1.diffie_hellman(&other_upk.1);
+                let z2 = self.eph_sk.as_ref().unwrap().diffie_hellman(&other_upk.1);
                 let z3 = self.usk.1.diffie_hellman(&incoming_eph_pk);
                 let z4 = self
                     .eph_sk
@@ -203,15 +307,20 @@ mod test {
     fn sig_dh_correctness() {
         let mut rng = rand::thread_rng();
 
+        let (mpk, msk) = SigDh::gen_main_keypair(&mut rng);
+
+        let id1 = rng.gen();
+        let id2 = rng.gen();
         let (upk1, usk1) = SigDh::gen_user_keypair(&mut rng);
         let (upk2, usk2) = SigDh::gen_user_keypair(&mut rng);
-        let cert1 = SigDhCert { upk: upk1.clone() };
-        let cert2 = SigDhCert { upk: upk2.clone() };
+
+        let cert1 = SigDh::extract(&msk, &id1, &upk1);
+        let cert2 = SigDh::extract(&msk, &id2, &upk2);
 
         let ssid = rng.gen();
 
-        let mut user1 = SigDh::new(ssid, cert1, usk1, upk2, PartyRole::Initiator);
-        let mut user2 = SigDh::new(ssid, cert2, usk2, upk1, PartyRole::Responder);
+        let mut user1 = SigDh::new(ssid, mpk, cert1, usk1, PartyRole::Initiator, id2);
+        let mut user2 = SigDh::new(ssid, mpk, cert2, usk2, PartyRole::Responder, id1);
 
         let msg1 = user1.run(&mut rng, &[]).unwrap().unwrap();
         let msg2 = user2.run(&mut rng, &msg1).unwrap().unwrap();
