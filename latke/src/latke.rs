@@ -64,9 +64,19 @@ impl<I: IdentityBasedKeyExchange, P: Pake> Latke<I, P> {
         incoming_msg: &[u8],
     ) -> Option<Vec<u8>> {
         // If the PAKE isn't done, run it
+        let mut just_finished_pake = false;
         if !self.pake_state.is_done() {
-            self.pake_state.run(incoming_msg).unwrap()
-        } else {
+            let out = self.pake_state.run(incoming_msg).unwrap();
+            // If we have something to send, send it right away
+            if out.is_some() {
+                return out;
+            }
+            just_finished_pake = self.pake_state.is_done();
+        }
+
+        // Everything after this point occurs if PAKE has completed in the past, or if it just completed and the given message was the final message (ie there's nothing left to send)
+
+        if self.pake_state.is_done() {
             // Initialize the encrypted IBKE if it hasn't been initialized yet
             if self.ibke_state.is_none() {
                 let eue_key = self.pake_state.finalize();
@@ -81,13 +91,31 @@ impl<I: IdentityBasedKeyExchange, P: Pake> Latke<I, P> {
                 ));
             }
 
-            // Run the encrypted IBKE
-            self.ibke_state
-                .as_mut()
-                .unwrap()
-                .run(&mut rng, incoming_msg)
-                .unwrap()
+            if just_finished_pake {
+                // If the initiator just finished the PAKE and has nothing more to send, then they start the encrypted IBKE right away
+                if self.role == PartyRole::Initiator {
+                    return self
+                        .ibke_state
+                        .as_mut()
+                        .unwrap()
+                        .run(&mut rng, &[])
+                        .unwrap();
+                } else {
+                    // Otherwise the responder just finished the PAKE, and must wait for the first IBKE message
+                    return None;
+                }
+            } else {
+                // Otherwise, we are in the middle of the encrypted IBKE
+                return self
+                    .ibke_state
+                    .as_mut()
+                    .unwrap()
+                    .run(&mut rng, incoming_msg)
+                    .unwrap();
+            }
         }
+
+        unreachable!()
     }
 
     pub fn is_done(&self) -> bool {
@@ -115,8 +143,8 @@ mod test {
 
     #[test]
     fn latke_correctness() {
-        type L = Latke<IdSigDh, KcSpake2>;
-        //type L = Latke<IdSigmaR, Cake>;
+        //type L = Latke<IdSigDh, KcSpake2>;
+        type L = Latke<IdSigmaR, Cake>;
         let mut rng = rand::thread_rng();
 
         let id1 = rng.gen();
@@ -125,6 +153,9 @@ mod test {
 
         let pwfile1 = L::gen_pwfile(&mut rng, b"password", &id1);
         let pwfile2 = L::gen_pwfile(&mut rng, b"password", &id2);
+
+        // The users' mpk values are a function of the password, so they should be the same
+        assert!(pwfile1.mpk == pwfile2.mpk);
 
         let mut user1 = L::new_session(&mut rng, ssid, pwfile1, PartyRole::Initiator);
         let mut user2 = L::new_session(&mut rng, ssid, pwfile2, PartyRole::Responder);

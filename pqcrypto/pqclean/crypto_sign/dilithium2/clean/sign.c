@@ -56,7 +56,6 @@ int PQCLEAN_DILITHIUM2_CLEAN_crypto_sign_keypair_det(uint8_t *coins, uint8_t *pk
     }
 
     /* Get randomness for rho, rhoprime and key */
-    randombytes(seedbuf, SEEDBYTES);
     shake256(seedbuf, 2 * SEEDBYTES + CRHBYTES, seedbuf, SEEDBYTES);
     rho = seedbuf;
     rhoprime = rho + SEEDBYTES;
