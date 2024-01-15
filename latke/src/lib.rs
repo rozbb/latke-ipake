@@ -12,6 +12,7 @@ mod eue_transform;
 pub mod id_hmqv_c;
 pub mod id_sig_dh;
 pub mod id_sigma_r;
+mod ideal_cipher;
 pub mod kc_spake2;
 pub mod latke;
 

@@ -22,9 +22,11 @@ subtle = "2.5.0"
 ed25519-dalek = { version = "2.1.0", features = ["rand_core"] }
 x25519-dalek = { version = "2.0.0", features = ["static_secrets", "reusable_secrets"] }
 rand_chacha = "0.3.1"
+crypto-permutation = "0.1.0"
+deck-farfalle = { version = "0.1.0", features = ["kravatte"] }
 
 [dev-dependencies]
-criterion = "0.3"
+criterion = { version = "0.5", features = ["html_reports"] }
 rand = "0.8"
 
 [[bench]]
