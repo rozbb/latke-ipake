@@ -1,7 +1,10 @@
-use latke::cake::{CakeInitiator, CakeResponder};
+use latke::{
+    cake::Cake, chip::Chip, id_sigma_r::IdSigmaR, kc_spake2::KcSpake2, latke::Latke,
+    sig_dh::IdSigDh, IdentityBasedKeyExchange, Pake, PartyRole,
+};
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use rand::thread_rng;
+use rand::{thread_rng, Rng};
 use saber::firesaber::{
     decapsulate as kem_decap, decapsulate_ind_cpa as kem_decap_ind_cpa, encapsulate as kem_encap,
     encapsulate_ind_cpa as kem_encap_ind_cpa, keygen as kem_keygen,
@@ -58,25 +61,103 @@ fn bench_ind_cpa_kem(c: &mut Criterion) {
 fn bench_pake(c: &mut Criterion) {
     let mut rng = thread_rng();
     let password = b"hello world";
+    let ssid = rng.gen();
 
     c.bench_function("CAKE e2e", |b| {
         b.iter(|| {
-            let mut initiator = CakeInitiator::new(password);
-            let mut responder = CakeResponder::new(password);
+            let mut user1 = Cake::new(&mut rng, ssid, password, PartyRole::Initiator);
+            let mut user2 = Cake::new(&mut rng, ssid, password, PartyRole::Responder);
 
-            let nonce1 = initiator.nonce1_tx(&mut rng);
-            responder.nonce1_rx(&nonce1);
-            let nonce2 = responder.nonce2_tx(&mut rng);
-            initiator.nonce2_rx(&nonce2);
-            let eph_pk = initiator.step1_tx();
-            responder.step1_rx(&eph_pk);
-            let (ct, auth_tag2) = responder.step2_tx();
-            initiator.step2_rx(&ct, &auth_tag2).unwrap();
-            let auth_tag1 = initiator.step3_tx();
-            responder.step3_rx(&auth_tag1).unwrap();
+            let msg1 = user1.run(&[]).unwrap().unwrap();
+            let msg2 = user2.run(&msg1).unwrap().unwrap();
+            let msg3 = user1.run(&msg2).unwrap();
         })
     });
 }
 
-criterion_group!(benches, /*bench_ind_cpa_kem, bench_kem,*/ bench_pake);
+fn bench_chip(c: &mut Criterion) {
+    type C = Chip<KcSpake2>;
+    let mut rng = rand::thread_rng();
+
+    // Create random user IDs
+    let id1 = rng.gen();
+    let id2 = rng.gen();
+
+    // Create a random session ID
+    let ssid = rng.gen();
+
+    let password = b"password";
+
+    let pwfile1 = C::gen_pwfile(&mut rng, password.to_vec(), id1);
+    let pwfile2 = C::gen_pwfile(&mut rng, password.to_vec(), id2);
+
+    c.bench_function("Chip[KcSpake2]", |b| {
+        b.iter(|| {
+            let mut user1 =
+                C::new_session(&mut rng, ssid, pwfile1.clone(), PartyRole::Initiator, id2);
+            let mut user2 =
+                C::new_session(&mut rng, ssid, pwfile2.clone(), PartyRole::Responder, id1);
+
+            // Run through the whole protocol
+            let mut cur_step = 0;
+            let mut cur_msg = Some(Vec::new());
+            while cur_msg.is_some() {
+                cur_msg = if cur_step % 2 == 0 {
+                    user1.run(&mut rng, &cur_msg.unwrap()).unwrap()
+                } else {
+                    user2.run(&mut rng, &cur_msg.unwrap()).unwrap()
+                };
+
+                cur_step += 1;
+            }
+        })
+    });
+}
+
+fn bench_latke_generic<I: IdentityBasedKeyExchange, P: Pake>(name: &str, c: &mut Criterion) {
+    let mut rng = rand::thread_rng();
+
+    let id1 = rng.gen();
+    let id2 = rng.gen();
+    let ssid = rng.gen();
+
+    let pwfile1 = Latke::<I, P>::gen_pwfile(&mut rng, b"password", &id1);
+    let pwfile2 = Latke::<I, P>::gen_pwfile(&mut rng, b"password", &id2);
+
+    // Run through the whole protocol
+    c.bench_function(name, |b| {
+        b.iter(|| {
+            let mut user1 =
+                Latke::<I, P>::new_session(&mut rng, ssid, pwfile1.clone(), PartyRole::Initiator);
+            let mut user2 =
+                Latke::<I, P>::new_session(&mut rng, ssid, pwfile2.clone(), PartyRole::Responder);
+
+            let mut cur_step = 0;
+            let mut cur_msg = Vec::new();
+            loop {
+                let user = if cur_step % 2 == 0 {
+                    &mut user1
+                } else {
+                    &mut user2
+                };
+
+                if user.is_done() {
+                    // If it's this user's turn to talk, and it's done, then the whole protocol is done
+                    break;
+                } else {
+                    cur_msg = user.run(&mut rng, &cur_msg).unwrap_or(Vec::new());
+                }
+
+                cur_step += 1;
+            }
+        })
+    });
+}
+
+fn bench_latke(c: &mut Criterion) {
+    bench_latke_generic::<IdSigDh, KcSpake2>("Latke[KcSpake2,IdSigDh]", c);
+    bench_latke_generic::<IdSigmaR, Cake>("Latke[Cake,IdSigmaR]", c);
+}
+
+criterion_group!(benches, bench_pake, bench_chip, bench_latke);
 criterion_main!(benches);

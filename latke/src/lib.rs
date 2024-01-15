@@ -1,7 +1,7 @@
 use blake2::{Blake2b, Blake2b512};
 use hkdf::{
     hmac::{digest::consts::U32, SimpleHmac},
-    SimpleHkdf,
+    SimpleHkdf, SimpleHkdfExtract,
 };
 use rand_core::{CryptoRng, RngCore};
 
@@ -14,10 +14,11 @@ pub mod kc_spake2;
 pub mod latke;
 pub mod sig_dh;
 
-pub type MyHash256 = Blake2b<U32>;
-pub type MyHash512 = Blake2b512;
-pub type MyKdf = SimpleHkdf<MyHash256>;
-pub type MyMac = SimpleHmac<MyHash256>;
+pub(crate) type MyHash256 = Blake2b<U32>;
+pub(crate) type MyHash512 = Blake2b512;
+pub(crate) type MyKdf = SimpleHkdf<MyHash256>;
+pub(crate) type MyKdfExtract = SimpleHkdfExtract<MyHash256>;
+pub(crate) type MyMac = SimpleHmac<MyHash256>;
 
 /// ID strings are any bytestring. We'll limit it to 32 bytes here.
 pub type Id = [u8; 32];
@@ -33,13 +34,13 @@ pub type SessKey = [u8; 32];
 
 /// The role of a party in a 2-party protocol
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum PartyRole {
+pub enum PartyRole {
     Initiator,
     Responder,
 }
 
 /// A trait representing a PAKE protocol
-trait Pake {
+pub trait Pake {
     type Error: core::fmt::Debug;
 
     /// Makes a new PAKE session
@@ -58,7 +59,7 @@ trait Pake {
 
 /// An identity based key exchange protocol in the style of the AKE-to-IBKE transform described in LATKE.
 /// The only thing of note is that users generate their own user keypair, and `extract` takes the user public key as auxiliary data.
-trait IdentityBasedKeyExchange {
+pub trait IdentityBasedKeyExchange {
     type MainPubkey: Clone + AsBytes;
     type MainPrivkey;
     type UserPubkey;
@@ -102,6 +103,6 @@ trait IdentityBasedKeyExchange {
     fn finalize(&self) -> (Id, SessKey);
 }
 
-trait AsBytes {
+pub trait AsBytes {
     fn as_bytes(&self) -> &[u8];
 }

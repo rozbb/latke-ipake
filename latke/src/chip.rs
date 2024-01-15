@@ -1,4 +1,4 @@
-//! The [CHIP](https://eprint.iacr.org/2020/529.pdf) iPAKE. See Figure 6.
+//! The [CHIP](https://eprint.iacr.org/2020/529) iPAKE protocol. See Figure 6.
 
 #![allow(non_snake_case)]
 
@@ -13,35 +13,17 @@ use hkdf::hmac::digest::{consts::U64, Digest};
 use rand::{CryptoRng, RngCore};
 
 /// The password file for the CHIP protocol
-struct ChipPwFile {
+#[derive(Clone)]
+pub struct ChipPwfile {
     X: RistrettoPoint,
     Y: RistrettoPoint,
     xhat: Scalar,
 }
 
-impl ChipPwFile {
-    fn new<R: RngCore + CryptoRng>(mut rng: R, pw: Vec<u8>, id: Id) -> Self {
-        let x = Scalar::random(&mut rng);
-        let y = Scalar::from_hash(Blake2b512::new().chain_update([0x01]).chain_update(pw));
-
-        let X = RistrettoPoint::mul_base(&x);
-        let Y = RistrettoPoint::mul_base(&y);
-        let h = Scalar::from_hash(
-            Blake2b512::new()
-                .chain_update([0x02])
-                .chain_update(&id)
-                .chain_update(X.compress().as_bytes()),
-        );
-        let xhat = x + h * y;
-
-        ChipPwFile { X, Y, xhat }
-    }
-}
-
-// The protocol is perfectly symmetric, so we can use the same struct for both roles.
-struct Executor<R: RngCore + CryptoRng, P: Pake> {
+/// The CHIP protocol
+pub struct Chip<P: Pake> {
     // The IBKE portion
-    pwfile: ChipPwFile,
+    pwfile: ChipPwfile,
     ssid: Ssid,
     other_id: Id,
     role: PartyRole,
@@ -55,18 +37,39 @@ struct Executor<R: RngCore + CryptoRng, P: Pake> {
     tr_sent: Vec<Vec<u8>>,
     /// The transcript of every message received
     tr_recv: Vec<Vec<u8>>,
-    /// The RNG for this session
-    rng: R,
 
     next_step: usize,
 }
 
-impl<R: RngCore + CryptoRng, P: Pake> Executor<R, P> {
-    fn new(mut rng: R, pwfile: ChipPwFile, ssid: Ssid, other_id: Id, role: PartyRole) -> Self {
+impl<P: Pake> Chip<P> {
+    pub fn gen_pwfile<R: RngCore + CryptoRng>(mut rng: R, pw: Vec<u8>, id: Id) -> ChipPwfile {
+        let x = Scalar::random(&mut rng);
+        let y = Scalar::from_hash(MyHash512::new().chain_update([0x01]).chain_update(pw));
+
+        let X = RistrettoPoint::mul_base(&x);
+        let Y = RistrettoPoint::mul_base(&y);
+        let h = Scalar::from_hash(
+            MyHash512::new()
+                .chain_update([0x02])
+                .chain_update(&id)
+                .chain_update(X.compress().as_bytes()),
+        );
+        let xhat = x + h * y;
+
+        ChipPwfile { X, Y, xhat }
+    }
+
+    pub fn new_session<R: RngCore + CryptoRng>(
+        mut rng: R,
+        ssid: Ssid,
+        pwfile: ChipPwfile,
+        role: PartyRole,
+        other_id: Id,
+    ) -> Self {
         // The initiator does even steps, the responder does odd steps
         let next_step = if role == PartyRole::Initiator { 0 } else { 1 };
 
-        Executor {
+        Chip {
             pwfile,
             ssid,
             other_id,
@@ -76,15 +79,61 @@ impl<R: RngCore + CryptoRng, P: Pake> Executor<R, P> {
             key: None,
             tr_sent: Vec::new(),
             tr_recv: Vec::new(),
-            rng,
 
             next_step,
         }
     }
 
+    /// The all-in-one run function. This does the IBKE for the first two steps, then does the PAKE for the rest
+    pub fn run<R: RngCore + CryptoRng>(
+        &mut self,
+        mut rng: R,
+        incoming_msg: &[u8],
+    ) -> Result<Option<Vec<u8>>, P::Error> {
+        // Remember the initiator does even steps and the responder does odd steps
+        let out_msg = match self.next_step {
+            0 => Some(self.ibke_step_1(&mut rng)),
+            1 => {
+                self.tr_recv.push(incoming_msg.to_vec());
+                Some(self.ibke_step_1(&mut rng))
+            }
+            2 => {
+                self.tr_recv.push(incoming_msg.to_vec());
+                let ibke_out = self.ibke_step_2(incoming_msg);
+
+                // Initialize the PAKE and send the first message
+                let mut pake_state = P::new(&mut rng, self.ssid, &ibke_out, PartyRole::Initiator);
+                let pake_msg = pake_state.run(&[])?;
+                self.pake_state = Some(pake_state);
+
+                pake_msg
+            }
+            3 => {
+                let last_msg = self.tr_recv.last().cloned().unwrap();
+                let ibke_out = self.ibke_step_2(&last_msg);
+
+                // Initialize the PAKE, process the first message, and send the second
+                let mut pake_state = P::new(&mut rng, self.ssid, &ibke_out, PartyRole::Responder);
+                let pake_msg = pake_state.run(incoming_msg)?;
+                self.pake_state = Some(pake_state);
+
+                pake_msg
+            }
+            _ => self.pake_state.as_mut().unwrap().run(incoming_msg)?,
+        };
+
+        self.next_step += 2;
+        Ok(out_msg)
+    }
+
+    /// Returns the final session key. Panics if it is called before the protocol successfully completes
+    pub fn finalize(&self) -> SessKey {
+        self.pake_state.as_ref().unwrap().finalize()
+    }
+
     /// The first step of the Fiore-Gennaro IBKE
-    fn ibke_step_1(&mut self) -> Vec<u8> {
-        self.r = Scalar::random(&mut self.rng);
+    fn ibke_step_1<R: RngCore + CryptoRng>(&mut self, mut rng: R) -> Vec<u8> {
+        self.r = Scalar::random(&mut rng);
         let R = RistrettoPoint::mul_base(&self.r);
 
         // Send X, R
@@ -144,51 +193,6 @@ impl<R: RngCore + CryptoRng, P: Pake> Executor<R, P> {
 
         pake_input
     }
-
-    /// The all-in-one run function. This does the IBKE for the first two steps, then does the PAKE for the rest
-    fn run(&mut self, incoming_msg: &[u8]) -> Result<Option<Vec<u8>>, P::Error> {
-        // Remember the initiator does even steps and the responder does odd steps
-        let out_msg = match self.next_step {
-            0 => Some(self.ibke_step_1()),
-            1 => {
-                self.tr_recv.push(incoming_msg.to_vec());
-                Some(self.ibke_step_1())
-            }
-            2 => {
-                self.tr_recv.push(incoming_msg.to_vec());
-                let ibke_out = self.ibke_step_2(incoming_msg);
-
-                // Initialize the PAKE and send the first message
-                let mut pake_state =
-                    P::new(&mut self.rng, self.ssid, &ibke_out, PartyRole::Initiator);
-                let pake_msg = pake_state.run(&[])?;
-                self.pake_state = Some(pake_state);
-
-                pake_msg
-            }
-            3 => {
-                let last_msg = self.tr_recv.last().cloned().unwrap();
-                let ibke_out = self.ibke_step_2(&last_msg);
-
-                // Initialize the PAKE, process the first message, and send the second
-                let mut pake_state =
-                    P::new(&mut self.rng, self.ssid, &ibke_out, PartyRole::Responder);
-                let pake_msg = pake_state.run(incoming_msg)?;
-                self.pake_state = Some(pake_state);
-
-                pake_msg
-            }
-            _ => self.pake_state.as_mut().unwrap().run(incoming_msg)?,
-        };
-
-        self.next_step += 2;
-        Ok(out_msg)
-    }
-
-    /// Returns the final session key. Panics if it is called before the protocol successfully completes
-    fn finalize(&self) -> SessKey {
-        self.pake_state.as_ref().unwrap().finalize()
-    }
 }
 
 #[cfg(test)]
@@ -200,6 +204,7 @@ mod test {
 
     #[test]
     fn chip_correctness() {
+        type C = Chip<KcSpake2>;
         let mut rng = rand::thread_rng();
 
         // Create random user IDs
@@ -211,32 +216,20 @@ mod test {
 
         let password = b"torque (construction noise) lewith";
 
-        let pwfile1 = ChipPwFile::new(&mut rng, password.to_vec(), id1);
-        let pwfile2 = ChipPwFile::new(&mut rng, password.to_vec(), id2);
+        let pwfile1 = C::gen_pwfile(&mut rng, password.to_vec(), id1);
+        let pwfile2 = C::gen_pwfile(&mut rng, password.to_vec(), id2);
 
-        let mut user1 = Executor::<_, KcSpake2>::new(
-            rand::thread_rng(),
-            pwfile1,
-            ssid,
-            id2,
-            PartyRole::Initiator,
-        );
-        let mut user2 = Executor::<_, KcSpake2>::new(
-            rand::thread_rng(),
-            pwfile2,
-            ssid,
-            id1,
-            PartyRole::Responder,
-        );
+        let mut user1 = C::new_session(&mut rng, ssid, pwfile1, PartyRole::Initiator, id2);
+        let mut user2 = C::new_session(&mut rng, ssid, pwfile2, PartyRole::Responder, id1);
 
         // Run through the whole protocol
         let mut cur_step = 0;
         let mut cur_msg = Some(Vec::new());
         while cur_msg.is_some() {
             cur_msg = if cur_step % 2 == 0 {
-                user1.run(&cur_msg.unwrap()).unwrap()
+                user1.run(&mut rng, &cur_msg.unwrap()).unwrap()
             } else {
-                user2.run(&cur_msg.unwrap()).unwrap()
+                user2.run(&mut rng, &cur_msg.unwrap()).unwrap()
             };
 
             cur_step += 1;

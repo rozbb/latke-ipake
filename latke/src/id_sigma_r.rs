@@ -23,7 +23,7 @@ use saber::{
 };
 
 #[derive(Debug)]
-pub(crate) enum SigmaError {
+pub enum SigmaError {
     Kem(SaberError),
     InvalidLength(pqcrypto_traits::Error),
     Sig(VerificationError),
@@ -63,7 +63,7 @@ impl crate::AsBytes for SigPubkey {
 /// A certificate is a signed statement that a party with a given ID has a certain public key.
 /// For our PQ Sigma protocol, the signature is a Dilithium signature, and the public key is a Dilithium public key.
 #[derive(Clone)]
-pub(crate) struct SigmaCert {
+pub struct SigmaCert {
     id: Id,
     upk: SigPubkey,
     sig: DetachedSignature,

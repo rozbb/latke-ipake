@@ -1,31 +1,47 @@
 use crate::{
-    eue_transform::Eue, AsBytes, Id, IdentityBasedKeyExchange, MyHash256, Pake, PartyRole, SessKey,
-    Ssid,
+    eue_transform::Eue, AsBytes, Id, IdentityBasedKeyExchange, MyHash256, MyKdfExtract, Pake,
+    PartyRole, SessKey, Ssid,
 };
 
 use hkdf::hmac::digest::Digest;
 use rand_chacha::ChaCha8Rng as MyRng;
 use rand_core::{CryptoRng, RngCore, SeedableRng};
 
-struct Latke<I: IdentityBasedKeyExchange, P: Pake> {
+pub struct Latke<I: IdentityBasedKeyExchange, P: Pake> {
     ssid: Ssid,
-    pwfile: Pwfile<I>,
+    pwfile: LatkePwfile<I>,
     role: PartyRole,
 
     pake_state: P,
     ibke_state: Option<Eue<I>>,
 
+    running_transcript_hash: MyKdfExtract,
+
     _marker: core::marker::PhantomData<(I, P)>,
 }
 
-struct Pwfile<I: IdentityBasedKeyExchange> {
+pub struct LatkePwfile<I: IdentityBasedKeyExchange> {
     mpk: I::MainPubkey,
     cert: I::Certificate,
     usk: I::UserPrivkey,
 }
 
+impl<I: IdentityBasedKeyExchange> Clone for LatkePwfile<I> {
+    fn clone(&self) -> Self {
+        Self {
+            mpk: self.mpk.clone(),
+            cert: self.cert.clone(),
+            usk: self.usk.clone(),
+        }
+    }
+}
+
 impl<I: IdentityBasedKeyExchange, P: Pake> Latke<I, P> {
-    pub fn gen_pwfile<R: RngCore + CryptoRng>(mut rng: R, password: &[u8], id: &Id) -> Pwfile<I> {
+    pub fn gen_pwfile<R: RngCore + CryptoRng>(
+        mut rng: R,
+        password: &[u8],
+        id: &Id,
+    ) -> LatkePwfile<I> {
         // Use the password to generate the main keypair
         let seed = MyHash256::digest(password);
         let mut pw_based_rng = MyRng::from_seed(seed.into());
@@ -36,13 +52,13 @@ impl<I: IdentityBasedKeyExchange, P: Pake> Latke<I, P> {
         // Extract the certificate
         let cert = I::extract(&msk, id, &upk);
 
-        Pwfile { mpk, cert, usk }
+        LatkePwfile { mpk, cert, usk }
     }
 
     pub fn new_session<R: RngCore + CryptoRng>(
         mut rng: R,
         ssid: Ssid,
-        pwfile: Pwfile<I>,
+        pwfile: LatkePwfile<I>,
         role: PartyRole,
     ) -> Self {
         // Start the PAKE over self.mpk
@@ -54,6 +70,7 @@ impl<I: IdentityBasedKeyExchange, P: Pake> Latke<I, P> {
             role,
             pake_state,
             ibke_state: None,
+            running_transcript_hash: MyKdfExtract::new(Some(b"latke-tr-hash")),
             _marker: core::marker::PhantomData,
         }
     }
@@ -65,18 +82,16 @@ impl<I: IdentityBasedKeyExchange, P: Pake> Latke<I, P> {
     ) -> Option<Vec<u8>> {
         // If the PAKE isn't done, run it
         let mut just_finished_pake = false;
+        let mut out = None;
         if !self.pake_state.is_done() {
-            let out = self.pake_state.run(incoming_msg).unwrap();
-            // If we have something to send, send it right away
-            if out.is_some() {
-                return out;
-            }
+            out = self.pake_state.run(incoming_msg).unwrap();
             just_finished_pake = self.pake_state.is_done();
         }
 
-        // Everything after this point occurs if PAKE has completed in the past, or if it just completed and the given message was the final message (ie there's nothing left to send)
-
-        if self.pake_state.is_done() {
+        // If we have something to send, send it
+        let out = if out.is_some() {
+            out
+        } else {
             // Initialize the encrypted IBKE if it hasn't been initialized yet
             if self.ibke_state.is_none() {
                 let eue_key = self.pake_state.finalize();
@@ -94,28 +109,33 @@ impl<I: IdentityBasedKeyExchange, P: Pake> Latke<I, P> {
             if just_finished_pake {
                 // If the initiator just finished the PAKE and has nothing more to send, then they start the encrypted IBKE right away
                 if self.role == PartyRole::Initiator {
-                    return self
-                        .ibke_state
+                    self.ibke_state
                         .as_mut()
                         .unwrap()
                         .run(&mut rng, &[])
-                        .unwrap();
+                        .unwrap()
                 } else {
                     // Otherwise the responder just finished the PAKE, and must wait for the first IBKE message
-                    return None;
+                    None
                 }
             } else {
                 // Otherwise, we are in the middle of the encrypted IBKE
-                return self
-                    .ibke_state
+                self.ibke_state
                     .as_mut()
                     .unwrap()
                     .run(&mut rng, incoming_msg)
-                    .unwrap();
+                    .unwrap()
             }
-        }
+        };
 
-        unreachable!()
+        // Add the incoming and outgoing messages to the running transcript hash, if they exist
+        if incoming_msg.len() > 0 {
+            self.running_transcript_hash.input_ikm(incoming_msg);
+        }
+        out.as_ref()
+            .map(|v| self.running_transcript_hash.input_ikm(v));
+
+        out
     }
 
     pub fn is_done(&self) -> bool {
@@ -127,7 +147,19 @@ impl<I: IdentityBasedKeyExchange, P: Pake> Latke<I, P> {
     }
 
     pub fn finalize(&self) -> (Id, SessKey) {
-        self.ibke_state.as_ref().unwrap().finalize()
+        // Finalize the IBKE
+        let (id, ibke_sess_key) = self.ibke_state.as_ref().unwrap().finalize();
+
+        // Add the IBKE output to the running transcript hash
+        let mut trh = self.running_transcript_hash.clone();
+        trh.input_ikm(&ibke_sess_key);
+
+        // The final session key is the KDF of the transcript with the IBKE session key
+        let (_, hk) = trh.finalize();
+        let mut sess_key = [0u8; 32];
+        hk.expand(b"latke-final", &mut sess_key).unwrap();
+
+        (id, sess_key)
     }
 }
 
