@@ -10,7 +10,6 @@ pqcrypto-dilithium = { path = "../pqcrypto/pqcrypto-dilithium" }
 pqcrypto-traits = { path = "../pqcrypto/pqcrypto-traits" }
 hkdf = { version = "0.12", features = ["std"] }
 sha2 = "0.10"
-lioness = "0.1.2"
 blake2 = "0.10"
 generic-array = "1.0.0"
 rand = "0.8"

@@ -1,12 +1,15 @@
+//! Implements the LATKE iPAKE
+
 use crate::{
     eue_transform::Eue, AsBytes, Id, IdentityBasedKeyExchange, MyHash256, MyKdfExtract, Pake,
     PartyRole, SessKey, Ssid,
 };
 
 use hkdf::hmac::digest::Digest;
-use rand_chacha::ChaCha8Rng as MyRng;
+use rand_chacha::ChaCha12Rng as MyRng;
 use rand_core::{CryptoRng, RngCore, SeedableRng};
 
+/// The LATKE iPAKE protocol. Takes an IBKE and PAKE and turns it into an iPAKE
 pub struct Latke<I: IdentityBasedKeyExchange, P: Pake> {
     ssid: Ssid,
     pwfile: LatkePwfile<I>,
