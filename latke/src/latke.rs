@@ -166,31 +166,35 @@ impl<I: IdentityBasedKeyExchange, P: Pake> Latke<I, P> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::cake::Cake;
-    use crate::id_sigma_r::IdSigmaR;
-    use crate::kc_spake2::KcSpake2;
-    use crate::sig_dh::IdSigDh;
+    use crate::{
+        cake::Cake, id_hmqv_c::IdHmqvC, id_sig_dh::IdSigDh, id_sigma_r::IdSigmaR,
+        kc_spake2::KcSpake2,
+    };
 
     use rand::Rng;
 
     #[test]
     fn latke_correctness() {
-        //type L = Latke<IdSigDh, KcSpake2>;
-        type L = Latke<IdSigmaR, Cake>;
+        latke_correctness_generic::<IdHmqvC, KcSpake2>();
+        latke_correctness_generic::<IdSigDh, KcSpake2>();
+        latke_correctness_generic::<IdSigmaR, Cake>();
+    }
+
+    fn latke_correctness_generic<I: IdentityBasedKeyExchange, P: Pake>() {
         let mut rng = rand::thread_rng();
 
         let id1 = rng.gen();
         let id2 = rng.gen();
         let ssid = rng.gen();
 
-        let pwfile1 = L::gen_pwfile(&mut rng, b"password", &id1);
-        let pwfile2 = L::gen_pwfile(&mut rng, b"password", &id2);
+        let pwfile1 = Latke::<I, P>::gen_pwfile(&mut rng, b"password", &id1);
+        let pwfile2 = Latke::<I, P>::gen_pwfile(&mut rng, b"password", &id2);
 
         // The users' mpk values are a function of the password, so they should be the same
-        assert!(pwfile1.mpk == pwfile2.mpk);
+        assert!(pwfile1.mpk.as_bytes() == pwfile2.mpk.as_bytes());
 
-        let mut user1 = L::new_session(&mut rng, ssid, pwfile1, PartyRole::Initiator);
-        let mut user2 = L::new_session(&mut rng, ssid, pwfile2, PartyRole::Responder);
+        let mut user1 = Latke::<I, P>::new_session(&mut rng, ssid, pwfile1, PartyRole::Initiator);
+        let mut user2 = Latke::<I, P>::new_session(&mut rng, ssid, pwfile2, PartyRole::Responder);
 
         // Run through the whole protocol
         let mut cur_step = 0;

@@ -9,10 +9,11 @@ mod auth_enc;
 pub mod cake;
 pub mod chip;
 mod eue_transform;
+pub mod id_hmqv_c;
+pub mod id_sig_dh;
 pub mod id_sigma_r;
 pub mod kc_spake2;
 pub mod latke;
-pub mod sig_dh;
 
 pub(crate) type MyHash256 = Blake2b<U32>;
 pub(crate) type MyHash512 = Blake2b512;
