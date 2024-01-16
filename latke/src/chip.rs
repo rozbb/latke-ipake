@@ -196,7 +196,7 @@ impl<P: Pake> Chip<P> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::kc_spake2::KcSpake2;
+    use crate::pake::kc_spake2::KcSpake2;
 
     use rand::Rng;
 

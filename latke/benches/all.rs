@@ -1,7 +1,9 @@
 use latke::{
-    cake::Cake, chip::Chip, fg_ibke::FgIbkeC, id_hmqv_c::IdHmqvC, id_sig_dh::IdSigDh,
-    id_sigma_r::IdSigmaR, kc_spake2::KcSpake2, latke::Latke, IdentityBasedKeyExchange, Pake,
-    PartyRole,
+    chip::Chip,
+    ibke::{fg_ibke::FgIbkeC, id_hmqv_c::IdHmqvC, id_sig_dh::IdSigDh, id_sigma_r::IdSigmaR},
+    latke::Latke,
+    pake::{cake::Cake, kc_spake2::KcSpake2},
+    IdentityBasedKeyExchange, Pake, PartyRole,
 };
 
 use criterion::{criterion_group, criterion_main, Criterion};

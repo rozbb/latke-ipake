@@ -167,8 +167,8 @@ impl<I: IdentityBasedKeyExchange, P: Pake> Latke<I, P> {
 mod test {
     use super::*;
     use crate::{
-        cake::Cake, fg_ibke::FgIbkeC, id_hmqv_c::IdHmqvC, id_sig_dh::IdSigDh, id_sigma_r::IdSigmaR,
-        kc_spake2::KcSpake2,
+        ibke::{fg_ibke::FgIbkeC, id_hmqv_c::IdHmqvC, id_sig_dh::IdSigDh, id_sigma_r::IdSigmaR},
+        pake::{cake::Cake, kc_spake2::KcSpake2},
     };
 
     use rand::Rng;

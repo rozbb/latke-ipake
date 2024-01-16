@@ -127,7 +127,7 @@ impl<I: IdentityBasedKeyExchange> Eue<I> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::id_sigma_r::IdSigmaR;
+    use crate::ibke::id_sigma_r::IdSigmaR;
 
     use rand::Rng;
 
