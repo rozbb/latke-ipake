@@ -158,3 +158,33 @@ impl Pake for KcSpake2 {
         self.output_key.unwrap()
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use rand::{thread_rng, Rng};
+
+    #[test]
+    fn kc_spake2_correctness() {
+        let mut rng = thread_rng();
+
+        let ssid = rng.gen();
+
+        let mut user1 = KcSpake2::new(&mut rng, ssid, b"password", PartyRole::Initiator);
+        let mut user2 = KcSpake2::new(&mut rng, ssid, b"password", PartyRole::Responder);
+
+        let msg1 = user1.run(&[]).unwrap().unwrap();
+        let msg2 = user2.run(&msg1).unwrap().unwrap();
+        let msg3 = user1.run(&msg2).unwrap().unwrap();
+        let msg4 = user2.run(&msg3).unwrap();
+
+        // Check that the protocol is over
+        assert!(msg4.is_none());
+        assert!(user1.is_done());
+        assert!(user2.is_done());
+
+        // Check that the session keys are the same
+        assert_eq!(user1.finalize(), user2.finalize());
+    }
+}
