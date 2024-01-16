@@ -1,12 +1,13 @@
-//! Implements the Fiore-Gennaro IBKE with key confirmation
+//! Implements the [Fiore-Gennaro IBKE](https://www.dariofiore.it/papers/ib-ka-journal-final.pdf) with the addition of key confirmation
 #![allow(non_snake_case)]
 
 use blake2::digest::{Digest, MacError};
 use curve25519_dalek::{ristretto::CompressedRistretto, RistrettoPoint, Scalar};
 use rand_core::{CryptoRng, RngCore};
+use subtle::ConstantTimeEq;
 
 use crate::{
-    AsBytes, Id, IdentityBasedKeyExchange, MyHash512, MyKdfExtract, PartyRole, SessKey, Ssid,
+    AsBytes, Id, IdentityBasedKeyExchange, MyHash512, MyKdf, MyKdfExtract, PartyRole, SessKey, Ssid,
 };
 
 type MainPubkey = RistrettoPoint;
@@ -22,6 +23,7 @@ struct Certificate {
     xhat: Scalar,
 }
 
+/// The [Fiore-Gennaro IBKE](https://www.dariofiore.it/papers/ib-ka-journal-final.pdf) with the addition of key confirmation. It also hashes the transcript
 struct FgIbke {
     ssid: Ssid,
     mpk: MainPubkey,
@@ -30,10 +32,10 @@ struct FgIbke {
     running_transcript_hash: MyKdfExtract,
     eph_sk: Option<EphemeralPrivkey>,
     eph_pk: Option<EphemeralPubkey>,
-    // The output values. These need to be hashed in with other things before they're output as the session key
-    alpha: Option<RistrettoPoint>,
-    beta: Option<RistrettoPoint>,
     output_id: Option<Id>,
+    macs: Option<([u8; 32], [u8; 32])>,
+    // The session key before it's hashed with the transcript hash
+    sess_key: Option<SessKey>,
 
     done: bool,
     next_step: usize,
@@ -91,8 +93,8 @@ impl FgIbke {
             running_transcript_hash: MyKdfExtract::new(Some(b"fgibke-tr-hash")),
             eph_sk: None,
             eph_pk: None,
-            alpha: None,
-            beta: None,
+            macs: None,
+            sess_key: None,
             output_id: None,
 
             done: false,
@@ -139,31 +141,46 @@ impl FgIbke {
                     .unwrap()
                     .decompress()
                     .unwrap();
+                self.output_id = Some(other_id.try_into().unwrap());
 
                 // Generate an ephemeral keypair
                 let eph_sk = Scalar::random(&mut rng);
                 let eph_pk = RistrettoPoint::mul_base(&eph_sk);
 
+                // Do the key agreement arithmetic
                 let other_h = Scalar::from_hash(
                     MyHash512::new()
                         .chain_update([0x02])
                         .chain_update(&other_id)
                         .chain_update(incoming_X_bytes),
                 );
-                self.alpha = Some(incoming_eph_pk * eph_sk);
-                self.beta = Some(
-                    (incoming_eph_pk + incoming_X + (self.mpk * other_h))
-                        * (eph_sk + self.cert.xhat),
-                );
-                self.output_id = Some(other_id.try_into().unwrap());
+                let alpha = incoming_eph_pk * eph_sk;
+                let beta = (incoming_eph_pk + incoming_X + (self.mpk * other_h))
+                    * (eph_sk + self.cert.xhat);
 
-                // Send id, X, eph_pk
-                self.done = true;
+                // Now compute the session key and MACs
+                let mut sess_hash = [0u8; 64 + core::mem::size_of::<SessKey>()];
+                let hk = MyKdf::from_prk(
+                    &[
+                        alpha.compress().as_bytes().as_slice(),
+                        beta.compress().as_bytes().as_slice(),
+                    ]
+                    .concat(),
+                )
+                .unwrap();
+                hk.expand(b"fg-expand", &mut sess_hash).unwrap();
+                let (macs, sess_key) = sess_hash.split_at(64);
+                let (mac0, mac1) = macs.split_at(32);
+                self.macs = Some((mac0.try_into().unwrap(), mac1.try_into().unwrap()));
+                self.sess_key = Some(sess_key.try_into().unwrap());
+
+                // Send id, X, eph_pk, mac1
                 Some(
                     [
                         &self.cert.id,
                         self.cert.X.compress().as_bytes().as_slice(),
                         eph_pk.compress().as_bytes().as_slice(),
+                        mac1,
                     ]
                     .concat(),
                 )
@@ -172,7 +189,8 @@ impl FgIbke {
                 // Receive id, X, eph_pk
                 let rest = incoming_msg;
                 let (other_id, rest) = incoming_msg.split_at(Id::default().len());
-                let (incoming_X_bytes, incoming_eph_pk_bytes) = rest.split_at(32);
+                let (incoming_X_bytes, rest) = rest.split_at(32);
+                let (incoming_eph_pk_bytes, incoming_mac1) = rest.split_at(32);
                 let incoming_X = CompressedRistretto::from_slice(incoming_X_bytes)
                     .unwrap()
                     .decompress()
@@ -181,20 +199,54 @@ impl FgIbke {
                     .unwrap()
                     .decompress()
                     .unwrap();
+                self.output_id = Some(other_id.try_into().unwrap());
 
+                // Do the key agreement arithmetic
                 let other_h = Scalar::from_hash(
                     MyHash512::new()
                         .chain_update([0x02])
                         .chain_update(&other_id)
                         .chain_update(incoming_X_bytes),
                 );
-                self.alpha = Some(incoming_eph_pk * self.eph_sk.as_ref().unwrap());
-                self.beta = Some(
-                    (incoming_eph_pk + incoming_X + (self.mpk * other_h))
-                        * (self.eph_sk.as_ref().unwrap() + self.cert.xhat),
-                );
-                self.output_id = Some(other_id.try_into().unwrap());
+                let alpha = incoming_eph_pk * self.eph_sk.as_ref().unwrap();
+                let beta = (incoming_eph_pk + incoming_X + (self.mpk * other_h))
+                    * (self.eph_sk.as_ref().unwrap() + self.cert.xhat);
 
+                // Now compute the session key and MACs
+                let mut sess_hash = [0u8; 64 + core::mem::size_of::<SessKey>()];
+                let hk = MyKdf::from_prk(
+                    &[
+                        alpha.compress().as_bytes().as_slice(),
+                        beta.compress().as_bytes().as_slice(),
+                    ]
+                    .concat(),
+                )
+                .unwrap();
+                hk.expand(b"fg-expand", &mut sess_hash).unwrap();
+                let (macs, sess_key) = sess_hash.split_at(64);
+                let (mac0, mac1) = macs.split_at(32);
+                self.sess_key = Some(sess_key.try_into().unwrap());
+
+                // Check the MAC
+                if !bool::from(mac1.ct_eq(incoming_mac1)) {
+                    return Err(MacError);
+                }
+
+                // Send the MAC
+                self.done = true;
+                Some(mac0.to_vec())
+            }
+            3 => {
+                // Receive mac0
+                let incoming_mac0 = incoming_msg;
+                let mac0 = self.macs.as_ref().unwrap().0;
+
+                // Check the MAC
+                if !bool::from(mac0.ct_eq(&incoming_mac0)) {
+                    return Err(MacError);
+                }
+
+                // All done
                 self.done = true;
                 None
             }
@@ -228,8 +280,7 @@ impl FgIbke {
     fn finalize(&self) -> (Id, SessKey) {
         // Add the IBKE output to the running transcript hash
         let mut trh = self.running_transcript_hash.clone();
-        trh.input_ikm(self.alpha.as_ref().unwrap().compress().as_bytes());
-        trh.input_ikm(self.beta.as_ref().unwrap().compress().as_bytes());
+        trh.input_ikm(self.sess_key.as_ref().unwrap());
 
         // The final session key is the KDF of the transcript with the IBKE session key
         let (_, hk) = trh.finalize();
@@ -264,9 +315,10 @@ mod test {
 
         let msg1 = user1.run(&mut rng, &[]).unwrap().unwrap();
         let msg2 = user2.run(&mut rng, &msg1).unwrap().unwrap();
-        let msg3 = user1.run(&mut rng, &msg2).unwrap();
+        let msg3 = user1.run(&mut rng, &msg2).unwrap().unwrap();
+        let msg4 = user2.run(&mut rng, &msg3).unwrap();
 
-        assert!(msg3.is_none());
+        assert!(msg4.is_none());
         let (user1_interlocutor, user1_key) = user1.finalize();
         let (user2_interlocutor, user2_key) = user2.finalize();
 
