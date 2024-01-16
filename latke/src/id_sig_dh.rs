@@ -123,7 +123,12 @@ impl IdentityBasedKeyExchange for IdSigDh {
         ((sig_pk, dh_pk), (sig_sk, dh_sk))
     }
 
-    fn extract(msk: &SigPrivkey, id: &Id, upk: &UserPubkey) -> SigDhCert {
+    fn extract<R: RngCore + CryptoRng>(
+        _: R,
+        msk: &SigPrivkey,
+        id: &Id,
+        upk: &UserPubkey,
+    ) -> SigDhCert {
         let upk_sig = msk.sign(
             &[
                 &id[..],
@@ -364,8 +369,8 @@ mod test {
         let (upk1, usk1) = IdSigDh::gen_user_keypair(&mut rng);
         let (upk2, usk2) = IdSigDh::gen_user_keypair(&mut rng);
 
-        let cert1 = IdSigDh::extract(&msk, &id1, &upk1);
-        let cert2 = IdSigDh::extract(&msk, &id2, &upk2);
+        let cert1 = IdSigDh::extract(&mut rng, &msk, &id1, &upk1);
+        let cert2 = IdSigDh::extract(&mut rng, &msk, &id2, &upk2);
 
         let ssid = rng.gen();
 

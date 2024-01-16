@@ -77,7 +77,12 @@ pub trait IdentityBasedKeyExchange {
     fn gen_user_keypair<R: RngCore + CryptoRng>(rng: R) -> (Self::UserPubkey, Self::UserPrivkey);
 
     /// Extracts a certificate for the given identity and user public key
-    fn extract(msk: &Self::MainPrivkey, id: &Id, upk: &Self::UserPubkey) -> Self::Certificate;
+    fn extract<R: RngCore + CryptoRng>(
+        rng: R,
+        msk: &Self::MainPrivkey,
+        id: &Id,
+        upk: &Self::UserPubkey,
+    ) -> Self::Certificate;
 
     /// Begins a new session with a given SSID
     fn new_session<R: RngCore + CryptoRng>(

@@ -32,8 +32,13 @@ impl<I: IdentityBasedKeyExchange> Eue<I> {
         I::gen_user_keypair(rng)
     }
 
-    pub fn extract(msk: &I::MainPrivkey, id: &Id, upk: &I::UserPubkey) -> I::Certificate {
-        I::extract(msk, id, upk)
+    pub fn extract<R: RngCore + CryptoRng>(
+        mut rng: R,
+        msk: &I::MainPrivkey,
+        id: &Id,
+        upk: &I::UserPubkey,
+    ) -> I::Certificate {
+        I::extract(rng, msk, id, upk)
     }
 
     /// Ratchets forward the chain key to the next generation of chain and message keys
@@ -163,8 +168,8 @@ mod test {
         let (upk2, usk2) = EueSigmaR::gen_user_keypair(&mut rng);
 
         // Have the KGC sign the user's pubkeys
-        let cert1 = EueSigmaR::extract(&msk, &id1, &upk1);
-        let cert2 = EueSigmaR::extract(&msk, &id2, &upk2);
+        let cert1 = EueSigmaR::extract(&mut rng, &msk, &id1, &upk1);
+        let cert2 = EueSigmaR::extract(&mut rng, &msk, &id2, &upk2);
 
         // Start a new session with a random initial key
         let initial_key = rng.gen();

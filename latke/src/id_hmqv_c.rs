@@ -136,7 +136,12 @@ impl IdentityBasedKeyExchange for IdHmqvC {
         (upk, usk)
     }
 
-    fn extract(msk: &SigPrivkey, id: &Id, upk: &UserPubkey) -> IdHmqvCCert {
+    fn extract<R: RngCore + CryptoRng>(
+        _: R,
+        msk: &SigPrivkey,
+        id: &Id,
+        upk: &UserPubkey,
+    ) -> IdHmqvCCert {
         let upk_sig = msk.sign(&[&id[..], upk.compress().as_bytes()].concat());
         IdHmqvCCert {
             id: id.clone(),
@@ -376,8 +381,8 @@ mod test {
         let (upk1, usk1) = IdHmqvC::gen_user_keypair(&mut rng);
         let (upk2, usk2) = IdHmqvC::gen_user_keypair(&mut rng);
 
-        let cert1 = IdHmqvC::extract(&msk, &id1, &upk1);
-        let cert2 = IdHmqvC::extract(&msk, &id2, &upk2);
+        let cert1 = IdHmqvC::extract(&mut rng, &msk, &id1, &upk1);
+        let cert2 = IdHmqvC::extract(&mut rng, &msk, &id2, &upk2);
 
         let ssid = rng.gen();
 

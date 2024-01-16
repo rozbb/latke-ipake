@@ -1,6 +1,7 @@
 use latke::{
     cake::Cake,
     chip::Chip,
+    fg_ibke::FgIbkeC,
     id_hmqv_c::{self, IdHmqvC},
     id_sig_dh::IdSigDh,
     id_sigma_r::IdSigmaR,
@@ -161,6 +162,7 @@ fn bench_latke_generic<I: IdentityBasedKeyExchange, P: Pake>(name: &str, c: &mut
 }
 
 fn bench_latke(c: &mut Criterion) {
+    bench_latke_generic::<FgIbkeC, KcSpake2>("Latke[KcSpake2,FgIbkeC]", c);
     bench_latke_generic::<IdSigDh, KcSpake2>("Latke[KcSpake2,IdSigDh]", c);
     bench_latke_generic::<IdHmqvC, KcSpake2>("Latke[KcSpake2,IdHmqvC]", c);
     bench_latke_generic::<IdSigmaR, Cake>("Latke[Cake,IdSigmaR]", c);

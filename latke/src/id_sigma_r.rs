@@ -1,3 +1,5 @@
+//! Implements the SIGMA-R protocol described in the [SIGMA paper](https://iacr.org/archive/crypto2003/27290399/27290399.pdf), modified  by [Peikert](https://eprint.iacr.org/2014/070) to use KEMs, and transformed using the AKE-to-IBKE transform describe in LATKE.
+
 use crate::{
     auth_enc::{auth_decrypt, auth_encrypt, AuthEncKey},
     Id, IdentityBasedKeyExchange, MyKdf, MyMac, Nonce, PartyRole, SessKey, Ssid,
@@ -100,7 +102,8 @@ impl SigmaCert {
     }
 }
 
-/// The SIGMA-R protocol described in the [SIGMA paper](https://iacr.org/archive/crypto2003/27290399/27290399.pdf), modified  by [Peikert](https://eprint.iacr.org/2014/070) to use KEMs, and transformed using the AKE-to-IBKE transform describe in LATKE
+/// The SIGMA-R protocol described in the [SIGMA paper](https://iacr.org/archive/crypto2003/27290399/27290399.pdf), modified  by [Peikert](https://eprint.iacr.org/2014/070) to use KEMs, and transformed using the AKE-to-IBKE transform describe in LATKE.
+/// The KEM used is LightSaber, and the signature scheme for SIGMA-R and the AKE-to-IBKE transform is Dilithium2.
 pub struct IdSigmaR {
     /// The SSID for the session. For consistency in benches we assume this is negotiated beforehand. But SIGMA does define a way to negotiate this.
     ssid: Ssid,
@@ -148,7 +151,12 @@ impl IdentityBasedKeyExchange for IdSigmaR {
         Self::gen_main_keypair(rng)
     }
 
-    fn extract(msk: &SigPrivkey, id: &Id, upk: &SigPubkey) -> SigmaCert {
+    fn extract<R: RngCore + CryptoRng>(
+        _: R,
+        msk: &SigPrivkey,
+        id: &Id,
+        upk: &SigPubkey,
+    ) -> SigmaCert {
         let sig = detached_sign(&[id, upk.as_bytes()].concat(), msk);
         SigmaCert {
             id: id.clone(),
@@ -505,8 +513,8 @@ mod test {
         let (upk2, usk2) = IdSigmaR::gen_user_keypair(&mut rng);
 
         // Have the KGC sign the user's pubkeys
-        let cert1 = IdSigmaR::extract(&msk, &id1, &upk1);
-        let cert2 = IdSigmaR::extract(&msk, &id2, &upk2);
+        let cert1 = IdSigmaR::extract(&mut rng, &msk, &id1, &upk1);
+        let cert2 = IdSigmaR::extract(&mut rng, &msk, &id2, &upk2);
 
         // Start a new session
         let ssid = rng.gen();

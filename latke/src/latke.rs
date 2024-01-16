@@ -53,7 +53,7 @@ impl<I: IdentityBasedKeyExchange, P: Pake> Latke<I, P> {
         // Generate a user keypair using a real RNG
         let (upk, usk) = I::gen_user_keypair(&mut rng);
         // Extract the certificate
-        let cert = I::extract(&msk, id, &upk);
+        let cert = I::extract(&mut rng, &msk, id, &upk);
 
         LatkePwfile { mpk, cert, usk }
     }
@@ -170,7 +170,7 @@ impl<I: IdentityBasedKeyExchange, P: Pake> Latke<I, P> {
 mod test {
     use super::*;
     use crate::{
-        cake::Cake, id_hmqv_c::IdHmqvC, id_sig_dh::IdSigDh, id_sigma_r::IdSigmaR,
+        cake::Cake, fg_ibke::FgIbkeC, id_hmqv_c::IdHmqvC, id_sig_dh::IdSigDh, id_sigma_r::IdSigmaR,
         kc_spake2::KcSpake2,
     };
 
@@ -180,6 +180,7 @@ mod test {
     fn latke_correctness() {
         latke_correctness_generic::<IdHmqvC, KcSpake2>();
         latke_correctness_generic::<IdSigDh, KcSpake2>();
+        latke_correctness_generic::<FgIbkeC, KcSpake2>();
         latke_correctness_generic::<IdSigmaR, Cake>();
     }
 

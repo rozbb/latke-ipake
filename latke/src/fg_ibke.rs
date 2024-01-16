@@ -10,24 +10,24 @@ use crate::{
     AsBytes, Id, IdentityBasedKeyExchange, MyHash512, MyKdf, MyKdfExtract, PartyRole, SessKey, Ssid,
 };
 
-type MainPubkey = RistrettoPoint;
+type MainPubkey = CompressedRistretto;
 type MainPrivkey = Scalar;
 
 type EphemeralPubkey = RistrettoPoint;
 type EphemeralPrivkey = Scalar;
 
 #[derive(Clone)]
-struct Certificate {
+pub struct FgIbkeCCert {
     id: Id,
     X: RistrettoPoint,
     xhat: Scalar,
 }
 
 /// The [Fiore-Gennaro IBKE](https://www.dariofiore.it/papers/ib-ka-journal-final.pdf) with the addition of key confirmation. It also hashes the transcript
-struct FgIbke {
+pub struct FgIbkeC {
     ssid: Ssid,
     mpk: MainPubkey,
-    cert: Certificate,
+    cert: FgIbkeCCert,
 
     running_transcript_hash: MyKdfExtract,
     eph_sk: Option<EphemeralPrivkey>,
@@ -41,26 +41,26 @@ struct FgIbke {
     next_step: usize,
 }
 
-impl FgIbke {
-    //type MainPubkey = MainPubkey;
-    //type MainPrivkey = MainPrivkey;
-    //type UserPubkey = ();
-    //type UserPrivkey = ();
-    //type Certificate = Certificate;
+impl IdentityBasedKeyExchange for FgIbkeC {
+    type MainPubkey = MainPubkey;
+    type MainPrivkey = MainPrivkey;
+    type UserPubkey = ();
+    type UserPrivkey = ();
+    type Certificate = FgIbkeCCert;
 
-    //type Error = ();
+    type Error = MacError;
 
     fn gen_main_keypair<R: RngCore + CryptoRng>(mut rng: R) -> (MainPubkey, MainPrivkey) {
         let msk = MainPrivkey::random(&mut rng);
-        let mpk = MainPubkey::mul_base(&msk);
-        (mpk, msk)
+        let mpk = RistrettoPoint::mul_base(&msk);
+        (mpk.compress(), msk)
     }
 
     fn gen_user_keypair<R: RngCore + CryptoRng>(_: R) -> ((), ()) {
         ((), ())
     }
 
-    fn extract<R: RngCore + CryptoRng>(mut rng: R, msk: &Scalar, id: &Id, _: &()) -> Certificate {
+    fn extract<R: RngCore + CryptoRng>(mut rng: R, msk: &Scalar, id: &Id, _: &()) -> FgIbkeCCert {
         let x = Scalar::random(&mut rng);
 
         let X = RistrettoPoint::mul_base(&x);
@@ -72,20 +72,20 @@ impl FgIbke {
         );
         let xhat = x + h * msk;
 
-        Certificate { id: *id, X, xhat }
+        FgIbkeCCert { id: *id, X, xhat }
     }
 
-    fn new_session<R: rand::prelude::RngCore + rand::prelude::CryptoRng>(
-        rng: R,
+    fn new_session<R: RngCore + CryptoRng>(
+        _: R,
         ssid: crate::Ssid,
         mpk: MainPubkey,
-        cert: Certificate,
+        cert: FgIbkeCCert,
         _: (),
         role: crate::PartyRole,
     ) -> Self {
         let next_step = if role == PartyRole::Initiator { 0 } else { 1 };
 
-        FgIbke {
+        FgIbkeC {
             ssid,
             mpk,
             cert,
@@ -155,8 +155,9 @@ impl FgIbke {
                         .chain_update(incoming_X_bytes),
                 );
                 let alpha = incoming_eph_pk * eph_sk;
-                let beta = (incoming_eph_pk + incoming_X + (self.mpk * other_h))
-                    * (eph_sk + self.cert.xhat);
+                let beta =
+                    (incoming_eph_pk + incoming_X + (self.mpk.decompress().unwrap() * other_h))
+                        * (eph_sk + self.cert.xhat);
 
                 // Now compute the session key and MACs
                 let mut sess_hash = [0u8; 64 + core::mem::size_of::<SessKey>()];
@@ -209,8 +210,9 @@ impl FgIbke {
                         .chain_update(incoming_X_bytes),
                 );
                 let alpha = incoming_eph_pk * self.eph_sk.as_ref().unwrap();
-                let beta = (incoming_eph_pk + incoming_X + (self.mpk * other_h))
-                    * (self.eph_sk.as_ref().unwrap() + self.cert.xhat);
+                let beta =
+                    (incoming_eph_pk + incoming_X + (self.mpk.decompress().unwrap() * other_h))
+                        * (self.eph_sk.as_ref().unwrap() + self.cert.xhat);
 
                 // Now compute the session key and MACs
                 let mut sess_hash = [0u8; 64 + core::mem::size_of::<SessKey>()];
@@ -301,17 +303,17 @@ mod test {
     fn fg_ibke_correctness() {
         let mut rng = thread_rng();
 
-        let (mpk, msk) = FgIbke::gen_main_keypair(&mut rng);
+        let (mpk, msk) = FgIbkeC::gen_main_keypair(&mut rng);
 
         let id1 = rng.gen();
         let id2 = rng.gen();
 
-        let cert1 = FgIbke::extract(&mut rng, &msk, &id1, &());
-        let cert2 = FgIbke::extract(&mut rng, &msk, &id2, &());
+        let cert1 = FgIbkeC::extract(&mut rng, &msk, &id1, &());
+        let cert2 = FgIbkeC::extract(&mut rng, &msk, &id2, &());
 
         let ssid = rng.gen();
-        let mut user1 = FgIbke::new_session(&mut rng, ssid, mpk, cert1, (), PartyRole::Initiator);
-        let mut user2 = FgIbke::new_session(&mut rng, ssid, mpk, cert2, (), PartyRole::Responder);
+        let mut user1 = FgIbkeC::new_session(&mut rng, ssid, mpk, cert1, (), PartyRole::Initiator);
+        let mut user2 = FgIbkeC::new_session(&mut rng, ssid, mpk, cert2, (), PartyRole::Responder);
 
         let msg1 = user1.run(&mut rng, &[]).unwrap().unwrap();
         let msg2 = user2.run(&mut rng, &msg1).unwrap().unwrap();
@@ -329,10 +331,8 @@ mod test {
     }
 }
 
-/*
-impl AsBytes for RistrettoPoint {
+impl AsBytes for CompressedRistretto {
     fn as_bytes(&self) -> &[u8] {
-        self.compress().as_bytes()
+        CompressedRistretto::as_bytes(self)
     }
 }
-*/
