@@ -1,13 +1,7 @@
 use latke::{
-    cake::Cake,
-    chip::Chip,
-    fg_ibke::FgIbkeC,
-    id_hmqv_c::{self, IdHmqvC},
-    id_sig_dh::IdSigDh,
-    id_sigma_r::IdSigmaR,
-    kc_spake2::KcSpake2,
-    latke::Latke,
-    IdentityBasedKeyExchange, Pake, PartyRole,
+    cake::Cake, chip::Chip, fg_ibke::FgIbkeC, id_hmqv_c::IdHmqvC, id_sig_dh::IdSigDh,
+    id_sigma_r::IdSigmaR, kc_spake2::KcSpake2, latke::Latke, IdentityBasedKeyExchange, Pake,
+    PartyRole,
 };
 
 use criterion::{criterion_group, criterion_main, Criterion};
@@ -77,7 +71,7 @@ fn bench_pake(c: &mut Criterion) {
 
             let msg1 = user1.run(&[]).unwrap().unwrap();
             let msg2 = user2.run(&msg1).unwrap().unwrap();
-            let msg3 = user1.run(&msg2).unwrap();
+            user1.run(&msg2).unwrap();
         })
     });
 }

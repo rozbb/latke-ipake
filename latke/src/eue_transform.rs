@@ -1,8 +1,7 @@
-use hkdf::hmac::digest::{Mac, MacError};
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
-    auth_enc::{self, auth_decrypt, auth_encrypt, AuthEncKey},
+    auth_enc::{auth_decrypt, auth_encrypt, AuthEncKey},
     Id, IdentityBasedKeyExchange, MyKdf, PartyRole, SessKey, Ssid,
 };
 
@@ -24,23 +23,6 @@ where
 }
 
 impl<I: IdentityBasedKeyExchange> Eue<I> {
-    pub fn gen_main_keypair<R: RngCore + CryptoRng>(rng: R) -> (I::MainPubkey, I::MainPrivkey) {
-        I::gen_main_keypair(rng)
-    }
-
-    pub fn gen_user_keypair<R: RngCore + CryptoRng>(rng: R) -> (I::UserPubkey, I::UserPrivkey) {
-        I::gen_user_keypair(rng)
-    }
-
-    pub fn extract<R: RngCore + CryptoRng>(
-        mut rng: R,
-        msk: &I::MainPrivkey,
-        id: &Id,
-        upk: &I::UserPubkey,
-    ) -> I::Certificate {
-        I::extract(rng, msk, id, upk)
-    }
-
     /// Ratchets forward the chain key to the next generation of chain and message keys
     fn ratchet_keys(&mut self) {
         let hk = MyKdf::from_prk(&self.chain_key).unwrap();
@@ -157,19 +139,19 @@ mod test {
         let mut rng = rand::thread_rng();
 
         // Generate the KGC keypair
-        let (mpk, msk) = EueSigmaR::gen_main_keypair(&mut rng);
+        let (mpk, msk) = IdSigmaR::gen_main_keypair(&mut rng);
 
         // Pick the user IDs randomly
         let id1 = rng.gen();
         let id2 = rng.gen();
 
         // Have the users generate their keypairs
-        let (upk1, usk1) = EueSigmaR::gen_user_keypair(&mut rng);
-        let (upk2, usk2) = EueSigmaR::gen_user_keypair(&mut rng);
+        let (upk1, usk1) = IdSigmaR::gen_user_keypair(&mut rng);
+        let (upk2, usk2) = IdSigmaR::gen_user_keypair(&mut rng);
 
         // Have the KGC sign the user's pubkeys
-        let cert1 = EueSigmaR::extract(&mut rng, &msk, &id1, &upk1);
-        let cert2 = EueSigmaR::extract(&mut rng, &msk, &id2, &upk2);
+        let cert1 = IdSigmaR::extract(&mut rng, &msk, &id1, &upk1);
+        let cert2 = IdSigmaR::extract(&mut rng, &msk, &id2, &upk2);
 
         // Start a new session with a random initial key
         let initial_key = rng.gen();

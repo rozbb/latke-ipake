@@ -21,7 +21,7 @@
 use secret_integers::*;
 use sha3::digest::XofReader;
 
-use crate::generic::{self, INDCPAPublicKey as INDCPAPublicKeyTrait};
+use crate::generic;
 use crate::params::*;
 use crate::poly::Poly;
 

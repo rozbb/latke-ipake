@@ -1,15 +1,14 @@
-//! The [CHIP](https://eprint.iacr.org/2020/529) iPAKE protocol. See Figure 6.
+//! Implements the [CHIP](https://eprint.iacr.org/2020/529) iPAKE protocol. See Figure 6.
 
 #![allow(non_snake_case)]
 
 use crate::{Id, MyHash512, Pake, PartyRole, SessKey, Ssid};
 
-use blake2::{digest::MacError, Blake2b512};
 use curve25519_dalek::{
-    ristretto::{CompressedRistretto, RistrettoBasepointTable, RistrettoPoint},
+    ristretto::{CompressedRistretto, RistrettoPoint},
     scalar::Scalar,
 };
-use hkdf::hmac::digest::{consts::U64, Digest};
+use hkdf::hmac::digest::Digest;
 use rand::{CryptoRng, RngCore};
 
 /// The password file for the CHIP protocol
@@ -20,7 +19,8 @@ pub struct ChipPwfile {
     xhat: Scalar,
 }
 
-/// The CHIP protocol
+/// The [CHIP](https://eprint.iacr.org/2020/529) iPAKE protocol
+// This is annoying: it is not straightforward to reuse the FgIbkeC protocol, since that has key confirmation, and CHIP doesn't require it. So we just implement all of CHIP from scratch.
 pub struct Chip<P: Pake> {
     // The IBKE portion
     pwfile: ChipPwfile,
@@ -31,7 +31,6 @@ pub struct Chip<P: Pake> {
 
     // The PAKE portion
     pake_state: Option<P>,
-    key: Option<SessKey>,
 
     /// The transcript of every message sent
     tr_sent: Vec<Vec<u8>>,
@@ -76,7 +75,6 @@ impl<P: Pake> Chip<P> {
             role,
             r: Scalar::random(&mut rng),
             pake_state: None,
-            key: None,
             tr_sent: Vec::new(),
             tr_recv: Vec::new(),
 

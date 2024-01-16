@@ -19,8 +19,6 @@ pub struct Latke<I: IdentityBasedKeyExchange, P: Pake> {
     ibke_state: Option<Eue<I>>,
 
     running_transcript_hash: MyKdfExtract,
-
-    _marker: core::marker::PhantomData<(I, P)>,
 }
 
 pub struct LatkePwfile<I: IdentityBasedKeyExchange> {
@@ -74,7 +72,6 @@ impl<I: IdentityBasedKeyExchange, P: Pake> Latke<I, P> {
             pake_state,
             ibke_state: None,
             running_transcript_hash: MyKdfExtract::new(Some(b"latke-tr-hash")),
-            _marker: core::marker::PhantomData,
         }
     }
 

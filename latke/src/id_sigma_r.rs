@@ -7,9 +7,9 @@ use crate::{
 
 use hkdf::hmac::digest::{Mac, MacError};
 use pqcrypto_dilithium::dilithium2::{
-    detached_sign, keypair as gen_sig_keypair, keypair_det as gen_sig_keypair_det,
-    public_key_bytes as sig_pubkey_size, signature_bytes as sig_size, verify_detached_signature,
-    DetachedSignature, KeygenCoins, PublicKey as SigPubkey, SecretKey as SigPrivkey,
+    detached_sign, keypair_det as gen_sig_keypair_det, public_key_bytes as sig_pubkey_size,
+    signature_bytes as sig_size, verify_detached_signature, DetachedSignature, KeygenCoins,
+    PublicKey as SigPubkey, SecretKey as SigPrivkey,
 };
 use pqcrypto_traits::sign::{
     DetachedSignature as DetachedSignatureTrait, PublicKey, VerificationError,

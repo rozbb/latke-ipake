@@ -17,7 +17,7 @@ type EphemeralPubkey = RistrettoPoint;
 type EphemeralPrivkey = Scalar;
 
 #[derive(Clone)]
-pub struct FgIbkeCCert {
+pub struct FgIbkeCert {
     id: Id,
     X: RistrettoPoint,
     xhat: Scalar,
@@ -27,7 +27,7 @@ pub struct FgIbkeCCert {
 pub struct FgIbkeC {
     ssid: Ssid,
     mpk: MainPubkey,
-    cert: FgIbkeCCert,
+    cert: FgIbkeCert,
 
     running_transcript_hash: MyKdfExtract,
     eph_sk: Option<EphemeralPrivkey>,
@@ -46,7 +46,7 @@ impl IdentityBasedKeyExchange for FgIbkeC {
     type MainPrivkey = MainPrivkey;
     type UserPubkey = ();
     type UserPrivkey = ();
-    type Certificate = FgIbkeCCert;
+    type Certificate = FgIbkeCert;
 
     type Error = MacError;
 
@@ -60,7 +60,7 @@ impl IdentityBasedKeyExchange for FgIbkeC {
         ((), ())
     }
 
-    fn extract<R: RngCore + CryptoRng>(mut rng: R, msk: &Scalar, id: &Id, _: &()) -> FgIbkeCCert {
+    fn extract<R: RngCore + CryptoRng>(mut rng: R, msk: &Scalar, id: &Id, _: &()) -> FgIbkeCert {
         let x = Scalar::random(&mut rng);
 
         let X = RistrettoPoint::mul_base(&x);
@@ -72,14 +72,14 @@ impl IdentityBasedKeyExchange for FgIbkeC {
         );
         let xhat = x + h * msk;
 
-        FgIbkeCCert { id: *id, X, xhat }
+        FgIbkeCert { id: *id, X, xhat }
     }
 
     fn new_session<R: RngCore + CryptoRng>(
         _: R,
         ssid: crate::Ssid,
         mpk: MainPubkey,
-        cert: FgIbkeCCert,
+        cert: FgIbkeCert,
         _: (),
         role: crate::PartyRole,
     ) -> Self {
@@ -131,7 +131,7 @@ impl IdentityBasedKeyExchange for FgIbkeC {
             1 => {
                 // Receive id, X, eph_pk
                 let rest = incoming_msg;
-                let (other_id, rest) = incoming_msg.split_at(Id::default().len());
+                let (other_id, rest) = rest.split_at(Id::default().len());
                 let (incoming_X_bytes, incoming_eph_pk_bytes) = rest.split_at(32);
                 let incoming_X = CompressedRistretto::from_slice(incoming_X_bytes)
                     .unwrap()
@@ -189,7 +189,7 @@ impl IdentityBasedKeyExchange for FgIbkeC {
             2 => {
                 // Receive id, X, eph_pk
                 let rest = incoming_msg;
-                let (other_id, rest) = incoming_msg.split_at(Id::default().len());
+                let (other_id, rest) = rest.split_at(Id::default().len());
                 let (incoming_X_bytes, rest) = rest.split_at(32);
                 let (incoming_eph_pk_bytes, incoming_mac1) = rest.split_at(32);
                 let incoming_X = CompressedRistretto::from_slice(incoming_X_bytes)

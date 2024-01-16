@@ -2,7 +2,7 @@
 
 use crate::MyMac;
 
-use aes::cipher::{KeyIvInit, StreamCipher, StreamCipherSeek};
+use aes::cipher::{KeyIvInit, StreamCipher};
 use blake2::digest::OutputSizeUser;
 use hkdf::hmac::digest::{typenum::Unsigned, Mac, MacError};
 use rand_core::{CryptoRng, RngCore};

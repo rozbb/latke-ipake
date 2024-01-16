@@ -5,8 +5,7 @@ use crate::{Id, IdentityBasedKeyExchange, MyHash512, MyKdf, PartyRole, SessKey, 
 use blake2::digest::MacError;
 use curve25519_dalek::{ristretto::CompressedRistretto, RistrettoPoint, Scalar};
 use ed25519_dalek::{
-    Signature, SignatureError, Signer, SigningKey as SigPrivkey, Verifier,
-    VerifyingKey as SigPubkey,
+    Signature, Signer, SigningKey as SigPrivkey, Verifier, VerifyingKey as SigPubkey,
 };
 use hkdf::hmac::digest::Digest;
 use rand_core::{CryptoRng, RngCore};

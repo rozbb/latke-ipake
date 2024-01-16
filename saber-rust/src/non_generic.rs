@@ -1,4 +1,3 @@
-use crate::generic;
 macro_rules! __generate_non_generic_impl {
     ($struct:ident) => {
         /// A saber public key

@@ -2,7 +2,7 @@
 use crate::{MyKdf, MyMac, Pake, PartyRole, SessKey, Ssid};
 
 use blake2::digest::{MacError, OutputSizeUser};
-use hkdf::hmac::digest::{typenum::Unsigned, Mac};
+use hkdf::hmac::digest::typenum::Unsigned;
 use rand_core::{CryptoRng, RngCore};
 use spake2::{Ed25519Group, Identity, Password, Spake2};
 use subtle::ConstantTimeEq;
