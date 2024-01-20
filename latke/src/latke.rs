@@ -167,7 +167,12 @@ impl<I: IdentityBasedKeyExchange, P: Pake> Latke<I, P> {
 mod test {
     use super::*;
     use crate::{
-        ibke::{fg_ibke::FgIbkeC, id_hmqv_c::IdHmqvC, id_sig_dh::IdSigDh, id_sigma_r::IdSigmaR},
+        ibke::{
+            fg_ibke::FgIbkeC,
+            id_hmqv_c::IdHmqvC,
+            id_sig_dh::IdSigDh,
+            id_sigma_r::{IdSigmaRDilithium2, IdSigmaREd25519},
+        },
         pake::{cake::Cake, kc_spake2::KcSpake2},
     };
 
@@ -178,7 +183,8 @@ mod test {
         latke_correctness_generic::<IdHmqvC, KcSpake2>();
         latke_correctness_generic::<IdSigDh, KcSpake2>();
         latke_correctness_generic::<FgIbkeC, KcSpake2>();
-        //latke_correctness_generic::<IdSigmaR, Cake>();
+        latke_correctness_generic::<IdSigmaREd25519, Cake>();
+        latke_correctness_generic::<IdSigmaRDilithium2, Cake>();
     }
 
     fn latke_correctness_generic<I: IdentityBasedKeyExchange, P: Pake>() {

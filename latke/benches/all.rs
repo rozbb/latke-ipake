@@ -1,6 +1,11 @@
 use latke::{
     chip::Chip,
-    ibke::{fg_ibke::FgIbkeC, id_hmqv_c::IdHmqvC, id_sig_dh::IdSigDh, id_sigma_r::IdSigmaR},
+    ibke::{
+        fg_ibke::FgIbkeC,
+        id_hmqv_c::IdHmqvC,
+        id_sig_dh::IdSigDh,
+        id_sigma_r::{IdSigmaRDilithium2, IdSigmaREd25519},
+    },
     latke::Latke,
     pake::{cake::Cake, kc_spake2::KcSpake2},
     IdentityBasedKeyExchange, Pake, PartyRole,
@@ -161,7 +166,8 @@ fn bench_latke(c: &mut Criterion) {
     bench_latke_generic::<FgIbkeC, KcSpake2>("Latke[KcSpake2,FgIbkeC]", c);
     bench_latke_generic::<IdSigDh, KcSpake2>("Latke[KcSpake2,IdSigDh]", c);
     bench_latke_generic::<IdHmqvC, KcSpake2>("Latke[KcSpake2,IdHmqvC]", c);
-    bench_latke_generic::<IdSigmaR, Cake>("Latke[Cake,IdSigmaR]", c);
+    bench_latke_generic::<IdSigmaREd25519, Cake>("Latke[Cake,IdSigmaREd25519]", c);
+    bench_latke_generic::<IdSigmaRDilithium2, Cake>("Latke[Cake,IdSigmaRDilithium2]", c);
 }
 
 criterion_group!(benches, bench_pake, bench_chip, bench_latke);

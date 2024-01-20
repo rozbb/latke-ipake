@@ -6,10 +6,8 @@ use crate::{
 };
 
 use ed25519_dalek::{
-    ed25519::SignatureEncoding,
-    ed25519::{signature::Keypair, Error as EdError},
-    Signature as EdSignature, Signer, SigningKey as EdSecretKey, Verifier,
-    VerifyingKey as EdVerifyingKey,
+    ed25519::Error as EdError, Signature as EdSignature, Signer, SigningKey as EdSecretKey,
+    Verifier, VerifyingKey as EdVerifyingKey,
 };
 use hkdf::hmac::digest::{Mac, MacError};
 use pqcrypto_dilithium::dilithium2::{
@@ -20,7 +18,7 @@ use pqcrypto_dilithium::dilithium2::{
     PublicKey as DilithiumPubkey, SecretKey as DilithiumPrivkey,
 };
 use pqcrypto_traits::sign::{
-    DetachedSignature as DilithiumSignatureTrait, PublicKey, VerificationError,
+    DetachedSignature as DilithiumSignatureTrait, PublicKey, VerificationError as DilithiumError,
 };
 use rand_core::{CryptoRng, RngCore};
 use saber::{
@@ -39,7 +37,7 @@ enum IdSigmaSignatureScheme {
 }
 
 #[derive(Clone)]
-enum IdSigmaPrivkey {
+pub enum IdSigmaPrivkey {
     Dilithium2(DilithiumPrivkey),
     Ed25519(EdSecretKey),
 }
@@ -60,7 +58,7 @@ impl IdSigmaPrivkey {
 }
 
 #[derive(Clone)]
-enum IdSigmaPubkey {
+pub enum IdSigmaPubkey {
     Dilithium2(DilithiumPubkey),
     Ed25519(EdVerifyingKey),
 }
@@ -142,13 +140,13 @@ impl IdSigmaSignature {
 }
 
 #[derive(Debug)]
-enum IdSigmaSigError {
-    Dilithium2(VerificationError),
+pub enum IdSigmaSigError {
+    Dilithium2(DilithiumError),
     Ed25519(EdError),
 }
 
-impl From<VerificationError> for IdSigmaSigError {
-    fn from(err: VerificationError) -> Self {
+impl From<DilithiumError> for IdSigmaSigError {
+    fn from(err: DilithiumError) -> Self {
         Self::Dilithium2(err)
     }
 }
@@ -257,7 +255,7 @@ impl SigmaCert {
 
 /// The SIGMA-R protocol described in the [SIGMA paper](https://iacr.org/archive/crypto2003/27290399/27290399.pdf), modified  by [Peikert](https://eprint.iacr.org/2014/070) to use KEMs, and transformed using the AKE-to-IBKE transform describe in LATKE.
 /// The KEM used is LightSaber, and the signature scheme for SIGMA-R and the AKE-to-IBKE transform is Dilithium2.
-pub struct IdSigmaR {
+struct IdSigmaR {
     /// The SSID for the session. For consistency in benches we assume this is negotiated beforehand. But SIGMA does define a way to negotiate this.
     ssid: Ssid,
     /// The nonces for the two parties
@@ -285,13 +283,6 @@ pub struct IdSigmaR {
 }
 
 impl IdSigmaR {
-    //type MainPubkey = IdSigmaPubkey;
-    //type MainPrivkey = IdSigmaPrivkey;
-    //type UserPubkey = IdSigmaPubkey;
-    //type UserPrivkey = IdSigmaPrivkey;
-    //type Certificate = SigmaCert;
-    //type Error = SigmaError;
-
     fn gen_main_keypair<R: RngCore + CryptoRng>(
         sig_ty: IdSigmaSignatureScheme,
         mut rng: R,
@@ -672,69 +663,187 @@ impl IdSigmaR {
     }
 }
 
+// Now make some newtypes that implement the IdentityBasedKeyExchange trait
+
+pub struct IdSigmaREd25519(IdSigmaR);
+pub struct IdSigmaRDilithium2(IdSigmaR);
+
+impl IdentityBasedKeyExchange for IdSigmaREd25519 {
+    type MainPubkey = IdSigmaPubkey;
+    type MainPrivkey = IdSigmaPrivkey;
+    type UserPubkey = IdSigmaPubkey;
+    type UserPrivkey = IdSigmaPrivkey;
+    type Certificate = SigmaCert;
+    type Error = SigmaError;
+
+    fn gen_main_keypair<R: RngCore + CryptoRng>(rng: R) -> (Self::MainPubkey, Self::MainPrivkey) {
+        IdSigmaR::gen_main_keypair(IdSigmaSignatureScheme::Ed25519, rng)
+    }
+
+    fn gen_user_keypair<R: RngCore + CryptoRng>(rng: R) -> (Self::UserPubkey, Self::UserPrivkey) {
+        IdSigmaR::gen_user_keypair(IdSigmaSignatureScheme::Ed25519, rng)
+    }
+
+    fn extract<R: RngCore + CryptoRng>(
+        rng: R,
+        msk: &Self::MainPrivkey,
+        id: &Id,
+        upk: &Self::UserPubkey,
+    ) -> Self::Certificate {
+        IdSigmaR::extract(rng, msk, id, upk)
+    }
+
+    fn new_session<R: RngCore + CryptoRng>(
+        rng: R,
+        ssid: Ssid,
+        mpk: Self::MainPubkey,
+        cert: Self::Certificate,
+        usk: Self::UserPrivkey,
+        role: PartyRole,
+    ) -> Self {
+        IdSigmaREd25519(IdSigmaR::new_session(rng, ssid, mpk, cert, usk, role))
+    }
+
+    fn run<R: RngCore + CryptoRng>(
+        &mut self,
+        rng: R,
+        incoming_msg: &[u8],
+    ) -> Result<Option<Vec<u8>>, Self::Error> {
+        self.0.run(rng, incoming_msg)
+    }
+
+    fn run_sim(&mut self) -> Option<usize> {
+        self.0.run_sim()
+    }
+
+    fn is_done(&self) -> bool {
+        self.0.is_done()
+    }
+
+    fn finalize(&self) -> (Id, SessKey) {
+        self.0.finalize()
+    }
+}
+
+impl IdentityBasedKeyExchange for IdSigmaRDilithium2 {
+    type MainPubkey = IdSigmaPubkey;
+    type MainPrivkey = IdSigmaPrivkey;
+    type UserPubkey = IdSigmaPubkey;
+    type UserPrivkey = IdSigmaPrivkey;
+    type Certificate = SigmaCert;
+    type Error = SigmaError;
+
+    fn gen_main_keypair<R: RngCore + CryptoRng>(rng: R) -> (Self::MainPubkey, Self::MainPrivkey) {
+        IdSigmaR::gen_main_keypair(IdSigmaSignatureScheme::Dilithium2, rng)
+    }
+
+    fn gen_user_keypair<R: RngCore + CryptoRng>(rng: R) -> (Self::UserPubkey, Self::UserPrivkey) {
+        IdSigmaR::gen_user_keypair(IdSigmaSignatureScheme::Dilithium2, rng)
+    }
+
+    fn extract<R: RngCore + CryptoRng>(
+        rng: R,
+        msk: &Self::MainPrivkey,
+        id: &Id,
+        upk: &Self::UserPubkey,
+    ) -> Self::Certificate {
+        IdSigmaR::extract(rng, msk, id, upk)
+    }
+
+    fn new_session<R: RngCore + CryptoRng>(
+        rng: R,
+        ssid: Ssid,
+        mpk: Self::MainPubkey,
+        cert: Self::Certificate,
+        usk: Self::UserPrivkey,
+        role: PartyRole,
+    ) -> Self {
+        IdSigmaRDilithium2(IdSigmaR::new_session(rng, ssid, mpk, cert, usk, role))
+    }
+
+    fn run<R: RngCore + CryptoRng>(
+        &mut self,
+        rng: R,
+        incoming_msg: &[u8],
+    ) -> Result<Option<Vec<u8>>, Self::Error> {
+        self.0.run(rng, incoming_msg)
+    }
+
+    fn run_sim(&mut self) -> Option<usize> {
+        self.0.run_sim()
+    }
+
+    fn is_done(&self) -> bool {
+        self.0.is_done()
+    }
+
+    fn finalize(&self) -> (Id, SessKey) {
+        self.0.finalize()
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
     use rand::Rng;
 
-    #[test]
-    fn sigma_r_correctness() {
+    fn sigma_r_correctness_generic<I: IdentityBasedKeyExchange>() {
         let mut rng = rand::thread_rng();
 
-        // Test ID-SIGMA-R with Ed25519 and Dilithium2 signature schemes
-        for sig_ty in [
-            IdSigmaSignatureScheme::Ed25519,
-            IdSigmaSignatureScheme::Dilithium2,
-        ] {
-            // Generate the KGC keypair
-            let (mpk, msk) = IdSigmaR::gen_main_keypair(sig_ty, &mut rng);
+        // Generate the KGC keypair
+        let (mpk, msk) = I::gen_main_keypair(&mut rng);
 
-            // Pick the user IDs randomly
-            let id1 = rng.gen();
-            let id2 = rng.gen();
+        // Pick the user IDs randomly
+        let id1 = rng.gen();
+        let id2 = rng.gen();
 
-            // Have the users generate their keypairs
-            let (upk1, usk1) = IdSigmaR::gen_user_keypair(sig_ty, &mut rng);
-            let (upk2, usk2) = IdSigmaR::gen_user_keypair(sig_ty, &mut rng);
+        // Have the users generate their keypairs
+        let (upk1, usk1) = I::gen_user_keypair(&mut rng);
+        let (upk2, usk2) = I::gen_user_keypair(&mut rng);
 
-            // Have the KGC sign the user's pubkeys
-            let cert1 = IdSigmaR::extract(&mut rng, &msk, &id1, &upk1);
-            let cert2 = IdSigmaR::extract(&mut rng, &msk, &id2, &upk2);
+        // Have the KGC sign the user's pubkeys
+        let cert1 = I::extract(&mut rng, &msk, &id1, &upk1);
+        let cert2 = I::extract(&mut rng, &msk, &id2, &upk2);
 
-            // Start a new session
-            let ssid = rng.gen();
-            let mut user1 = IdSigmaR::new_session(
-                &mut rng,
-                ssid,
-                mpk.clone(),
-                cert1,
-                usk1,
-                PartyRole::Initiator,
-            );
-            let mut user2 = IdSigmaR::new_session(
-                &mut rng,
-                ssid,
-                mpk.clone(),
-                cert2,
-                usk2,
-                PartyRole::Responder,
-            );
+        // Start a new session
+        let ssid = rng.gen();
+        let mut user1 = I::new_session(
+            &mut rng,
+            ssid,
+            mpk.clone(),
+            cert1,
+            usk1,
+            PartyRole::Initiator,
+        );
+        let mut user2 = I::new_session(
+            &mut rng,
+            ssid,
+            mpk.clone(),
+            cert2,
+            usk2,
+            PartyRole::Responder,
+        );
 
-            // Run the session until completion
-            let msg1 = user1.run(&mut rng, &[]).unwrap().unwrap();
-            let msg2 = user2.run(&mut rng, &msg1).unwrap().unwrap();
-            let msg3 = user1.run(&mut rng, &msg2).unwrap().unwrap();
-            let msg4 = user2.run(&mut rng, &msg3).unwrap().unwrap();
-            let msg5 = user1.run(&mut rng, &msg4).unwrap();
+        // Run the session until completion
+        let msg1 = user1.run(&mut rng, &[]).unwrap().unwrap();
+        let msg2 = user2.run(&mut rng, &msg1).unwrap().unwrap();
+        let msg3 = user1.run(&mut rng, &msg2).unwrap().unwrap();
+        let msg4 = user2.run(&mut rng, &msg3).unwrap().unwrap();
+        let msg5 = user1.run(&mut rng, &msg4).unwrap();
 
-            let (user1_interlocutor, user1_key) = user1.finalize();
-            let (user2_interlocutor, user2_key) = user2.finalize();
+        let (user1_interlocutor, user1_key) = user1.finalize();
+        let (user2_interlocutor, user2_key) = user2.finalize();
 
-            // Ensure that there are no more messages to be sent, that the parties believe they're talking to each other, and that they have the same key
-            assert!(msg5.is_none());
-            assert!(user1_interlocutor == id2);
-            assert!(user2_interlocutor == id1);
-            assert_eq!(user1_key, user2_key);
-        }
+        // Ensure that there are no more messages to be sent, that the parties believe they're talking to each other, and that they have the same key
+        assert!(msg5.is_none());
+        assert!(user1_interlocutor == id2);
+        assert!(user2_interlocutor == id1);
+        assert_eq!(user1_key, user2_key);
+    }
+
+    #[test]
+    fn sigma_r_correctness() {
+        sigma_r_correctness_generic::<IdSigmaREd25519>();
+        sigma_r_correctness_generic::<IdSigmaRDilithium2>();
     }
 }

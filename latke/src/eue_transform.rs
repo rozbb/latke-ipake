@@ -127,32 +127,31 @@ impl<I: IdentityBasedKeyExchange> Eue<I> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::ibke::id_sigma_r::IdSigmaR;
+    use crate::ibke::id_sigma_r::IdSigmaREd25519;
 
     use rand::Rng;
 
     // Test the EUE transform when applied to the ID-SIGMA-R protocol
-    /*
     #[test]
     fn eue_sigma_r_correctness() {
-        type EueSigmaR = Eue<IdSigmaR>;
+        type EueSigmaR = Eue<IdSigmaREd25519>;
 
         let mut rng = rand::thread_rng();
 
         // Generate the KGC keypair
-        let (mpk, msk) = IdSigmaR::gen_main_keypair(&mut rng);
+        let (mpk, msk) = IdSigmaREd25519::gen_main_keypair(&mut rng);
 
         // Pick the user IDs randomly
         let id1 = rng.gen();
         let id2 = rng.gen();
 
         // Have the users generate their keypairs
-        let (upk1, usk1) = IdSigmaR::gen_user_keypair(&mut rng);
-        let (upk2, usk2) = IdSigmaR::gen_user_keypair(&mut rng);
+        let (upk1, usk1) = IdSigmaREd25519::gen_user_keypair(&mut rng);
+        let (upk2, usk2) = IdSigmaREd25519::gen_user_keypair(&mut rng);
 
         // Have the KGC sign the user's pubkeys
-        let cert1 = IdSigmaR::extract(&mut rng, &msk, &id1, &upk1);
-        let cert2 = IdSigmaR::extract(&mut rng, &msk, &id2, &upk2);
+        let cert1 = IdSigmaREd25519::extract(&mut rng, &msk, &id1, &upk1);
+        let cert2 = IdSigmaREd25519::extract(&mut rng, &msk, &id2, &upk2);
 
         // Start a new session with a random initial key
         let initial_key = rng.gen();
@@ -192,5 +191,4 @@ mod test {
         assert!(user2_interlocutor == id1);
         assert_eq!(user1_key, user2_key);
     }
-    */
 }
