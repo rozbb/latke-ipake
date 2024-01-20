@@ -2,33 +2,168 @@
 
 use crate::{
     auth_enc::{auth_decrypt, auth_encrypt, AuthEncKey},
-    Id, IdentityBasedKeyExchange, MyKdf, MyMac, Nonce, PartyRole, SessKey, Ssid,
+    AsBytes, Id, IdentityBasedKeyExchange, MyKdf, MyMac, Nonce, PartyRole, SessKey, Ssid,
 };
 
+use ed25519_dalek::{
+    ed25519::SignatureEncoding,
+    ed25519::{signature::Keypair, Error as EdError},
+    Signature as EdSignature, Signer, SigningKey as EdSecretKey, Verifier,
+    VerifyingKey as EdVerifyingKey,
+};
 use hkdf::hmac::digest::{Mac, MacError};
 use pqcrypto_dilithium::dilithium2::{
-    detached_sign, keypair_det as gen_sig_keypair_det, public_key_bytes as sig_pubkey_size,
-    signature_bytes as sig_size, verify_detached_signature, DetachedSignature, KeygenCoins,
-    PublicKey as SigPubkey, SecretKey as SigPrivkey,
+    detached_sign as dilithium_detached_sign, keypair_det as dilithium_gen_sig_keypair_det,
+    public_key_bytes as dilithium_sig_pubkey_size, signature_bytes as dilithium_sig_size,
+    verify_detached_signature as dilithium_verify_detached_signature,
+    DetachedSignature as DilithiumSignature, KeygenCoins as DilithiumKeygenCoins,
+    PublicKey as DilithiumPubkey, SecretKey as DilithiumPrivkey,
 };
 use pqcrypto_traits::sign::{
-    DetachedSignature as DetachedSignatureTrait, PublicKey, VerificationError,
+    DetachedSignature as DilithiumSignatureTrait, PublicKey, VerificationError,
 };
 use rand_core::{CryptoRng, RngCore};
 use saber::{
     lightsaber::{
         decapsulate_ind_cpa as kem_decap, encapsulate_ind_cpa as kem_encap,
-        keygen_ind_cpa as kem_keygen, Ciphertext as EncappedKey, INDCPAPublicKey, INDCPASecretKey,
-        BYTES_CCA_DEC, INDCPA_PUBLICKEYBYTES,
+        keygen_ind_cpa as kem_keygen, Ciphertext as EncappedKey, INDCPAPublicKey as KemPubkey,
+        INDCPASecretKey as KemPrivkey, BYTES_CCA_DEC, INDCPA_PUBLICKEYBYTES as KEM_PUBKEY_SIZE,
     },
     Error as SaberError,
 };
+
+#[derive(Copy, Clone)]
+enum IdSigmaSignatureScheme {
+    Dilithium2,
+    Ed25519,
+}
+
+#[derive(Clone)]
+enum IdSigmaPrivkey {
+    Dilithium2(DilithiumPrivkey),
+    Ed25519(EdSecretKey),
+}
+
+impl IdSigmaPrivkey {
+    fn sign(&self, bytes: &[u8]) -> IdSigmaSignature {
+        match self {
+            Self::Dilithium2(sk) => {
+                let sig = dilithium_detached_sign(bytes, sk);
+                IdSigmaSignature::Dilithium2(sig)
+            }
+            Self::Ed25519(sk) => {
+                let sig = sk.sign(bytes);
+                IdSigmaSignature::Ed25519(sig)
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+enum IdSigmaPubkey {
+    Dilithium2(DilithiumPubkey),
+    Ed25519(EdVerifyingKey),
+}
+
+impl IdSigmaPubkey {
+    fn kind(&self) -> IdSigmaSignatureScheme {
+        match self {
+            Self::Dilithium2(_) => IdSigmaSignatureScheme::Dilithium2,
+            Self::Ed25519(_) => IdSigmaSignatureScheme::Ed25519,
+        }
+    }
+}
+
+impl AsBytes for IdSigmaPubkey {
+    fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Dilithium2(pk) => {
+                <DilithiumPubkey as pqcrypto_traits::sign::PublicKey>::as_bytes(&pk)
+            }
+            Self::Ed25519(pk) => pk.as_bytes(),
+        }
+    }
+}
+
+impl IdSigmaPubkey {
+    fn verify(&self, bytes: &[u8], sig: &IdSigmaSignature) -> Result<(), IdSigmaSigError> {
+        match self {
+            Self::Dilithium2(pk) => {
+                if let IdSigmaSignature::Dilithium2(sig) = sig {
+                    dilithium_verify_detached_signature(sig, bytes, pk).map_err(Into::into)
+                } else {
+                    panic!("Signature scheme mismatch")
+                }
+            }
+            Self::Ed25519(pk) => {
+                if let IdSigmaSignature::Ed25519(sig) = sig {
+                    pk.verify(bytes, sig).map_err(Into::into)
+                } else {
+                    panic!("Signature scheme mismatch")
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+enum IdSigmaSignature {
+    Dilithium2(DilithiumSignature),
+    Ed25519(EdSignature),
+}
+
+impl IdSigmaSignature {
+    fn size(ty: IdSigmaSignatureScheme) -> usize {
+        match ty {
+            IdSigmaSignatureScheme::Dilithium2 => dilithium_sig_size(),
+            IdSigmaSignatureScheme::Ed25519 => ed25519_dalek::SIGNATURE_LENGTH,
+        }
+    }
+
+    fn from_bytes(ty: IdSigmaSignatureScheme, bytes: &[u8]) -> Self {
+        match ty {
+            IdSigmaSignatureScheme::Dilithium2 => {
+                IdSigmaSignature::Dilithium2(DilithiumSignature::from_bytes(bytes).unwrap())
+            }
+            IdSigmaSignatureScheme::Ed25519 => {
+                IdSigmaSignature::Ed25519(EdSignature::from_bytes(bytes.try_into().unwrap()))
+            }
+        }
+    }
+}
+
+impl IdSigmaSignature {
+    fn to_bytes(&self) -> Vec<u8> {
+        match self {
+            Self::Dilithium2(sig) => sig.as_bytes().to_vec(),
+            Self::Ed25519(sig) => sig.to_bytes().to_vec(),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum IdSigmaSigError {
+    Dilithium2(VerificationError),
+    Ed25519(EdError),
+}
+
+impl From<VerificationError> for IdSigmaSigError {
+    fn from(err: VerificationError) -> Self {
+        Self::Dilithium2(err)
+    }
+}
+
+impl From<EdError> for IdSigmaSigError {
+    fn from(err: EdError) -> Self {
+        Self::Ed25519(err)
+    }
+}
 
 #[derive(Debug)]
 pub enum SigmaError {
     Kem(SaberError),
     InvalidLength(pqcrypto_traits::Error),
-    Sig(VerificationError),
+    Sig(IdSigmaSigError),
     Mac(MacError),
 }
 
@@ -50,15 +185,9 @@ impl From<pqcrypto_traits::Error> for SigmaError {
     }
 }
 
-impl From<VerificationError> for SigmaError {
-    fn from(err: VerificationError) -> Self {
+impl From<IdSigmaSigError> for SigmaError {
+    fn from(err: IdSigmaSigError) -> Self {
         Self::Sig(err)
-    }
-}
-
-impl crate::AsBytes for SigPubkey {
-    fn as_bytes(&self) -> &[u8] {
-        <SigPubkey as pqcrypto_traits::sign::PublicKey>::as_bytes(&self)
     }
 }
 
@@ -67,37 +196,61 @@ impl crate::AsBytes for SigPubkey {
 #[derive(Clone)]
 pub struct SigmaCert {
     id: Id,
-    upk: SigPubkey,
-    sig: DetachedSignature,
+    upk: IdSigmaPubkey,
+    sig: IdSigmaSignature,
 }
 
 impl SigmaCert {
-    fn size() -> usize {
-        Id::default().len() + sig_pubkey_size() + sig_size()
+    fn size(ty: IdSigmaSignatureScheme) -> usize {
+        match ty {
+            IdSigmaSignatureScheme::Dilithium2 => {
+                Id::default().len() + dilithium_sig_pubkey_size() + dilithium_sig_size()
+            }
+            IdSigmaSignatureScheme::Ed25519 => Id::default().len() + 32 + EdSignature::BYTE_SIZE,
+        }
     }
 
     /// Serialize as upk || sig
     fn to_bytes(&self) -> Vec<u8> {
-        [&self.id, self.upk.as_bytes(), self.sig.as_bytes()].concat()
+        [&self.id, self.upk.as_bytes(), &self.sig.to_bytes()].concat()
     }
 
-    /// Deserialize from upk || sig
-    fn from_bytes(bytes: &[u8]) -> Result<Self, SigmaError> {
-        if bytes.len() != Self::size() {
+    /// Deserialize from id || upk || sig
+    fn from_bytes(ty: IdSigmaSignatureScheme, bytes: &[u8]) -> Result<Self, SigmaError> {
+        if bytes.len() != Self::size(ty) {
             return Err(SigmaError::InvalidLength(
                 pqcrypto_traits::Error::BadLength {
                     name: "cert",
                     actual: bytes.len(),
-                    expected: Self::size(),
+                    expected: Self::size(ty),
                 },
             ));
         }
-        let (id_upk_bytes, sig_bytes) = bytes.split_at(Id::default().len() + sig_pubkey_size());
-        let (id, upk_bytes) = id_upk_bytes.split_at(Id::default().len());
+
+        let rest = bytes;
+        let (id, rest) = rest.split_at(Id::default().len());
+        let (upk_bytes, sig_bytes) = rest.split_at(match ty {
+            IdSigmaSignatureScheme::Dilithium2 => dilithium_sig_pubkey_size(),
+            IdSigmaSignatureScheme::Ed25519 => 32,
+        });
+
+        let (upk, sig) = match ty {
+            IdSigmaSignatureScheme::Dilithium2 => (
+                IdSigmaPubkey::Dilithium2(DilithiumPubkey::from_bytes(upk_bytes)?),
+                IdSigmaSignature::Dilithium2(DilithiumSignature::from_bytes(sig_bytes)?),
+            ),
+            IdSigmaSignatureScheme::Ed25519 => (
+                IdSigmaPubkey::Ed25519(
+                    EdVerifyingKey::from_bytes(upk_bytes.try_into().unwrap()).unwrap(),
+                ),
+                IdSigmaSignature::Ed25519(EdSignature::from_bytes(sig_bytes.try_into().unwrap())),
+            ),
+        };
+
         Ok(Self {
             id: id.try_into().unwrap(),
-            upk: SigPubkey::from_bytes(upk_bytes)?,
-            sig: DetachedSignature::from_bytes(sig_bytes)?,
+            upk,
+            sig,
         })
     }
 }
@@ -110,15 +263,15 @@ pub struct IdSigmaR {
     /// The nonces for the two parties
     nonces: (Option<Nonce>, Option<Nonce>),
     /// The main public key of this identity-based system. This is used to verify certificates.
-    mpk: SigPubkey,
+    mpk: IdSigmaPubkey,
     /// The certificate Extracted for this party by the key generation center
     cert: SigmaCert,
     /// The corresponding secret key for the public key in `cert`
-    sig_privkey: SigPrivkey,
+    sig_privkey: IdSigmaPrivkey,
 
     // Ephemeral values
-    kem_pubkey: Option<INDCPAPublicKey>,
-    kem_privkey: Option<INDCPASecretKey>,
+    kem_pubkey: Option<KemPubkey>,
+    kem_privkey: Option<KemPrivkey>,
     encapped_key: Option<EncappedKey>,
     mac_key: Option<[u8; 32]>,
     enc_keys: Option<([u8; 32], [u8; 32])>,
@@ -131,33 +284,52 @@ pub struct IdSigmaR {
     done: bool,
 }
 
-impl IdentityBasedKeyExchange for IdSigmaR {
-    type MainPubkey = SigPubkey;
-    type MainPrivkey = SigPrivkey;
-    type UserPubkey = SigPubkey;
-    type UserPrivkey = SigPrivkey;
-    type Certificate = SigmaCert;
-    type Error = SigmaError;
+impl IdSigmaR {
+    //type MainPubkey = IdSigmaPubkey;
+    //type MainPrivkey = IdSigmaPrivkey;
+    //type UserPubkey = IdSigmaPubkey;
+    //type UserPrivkey = IdSigmaPrivkey;
+    //type Certificate = SigmaCert;
+    //type Error = SigmaError;
 
-    fn gen_main_keypair<R: RngCore + CryptoRng>(mut rng: R) -> (SigPubkey, SigPrivkey) {
-        // Generate random coins and use them for generation. We have to do this because gen_sig_keypair uses its own RNG
-        let mut coins = KeygenCoins::default();
-        rng.fill_bytes(&mut coins);
-        gen_sig_keypair_det(coins)
+    fn gen_main_keypair<R: RngCore + CryptoRng>(
+        sig_ty: IdSigmaSignatureScheme,
+        mut rng: R,
+    ) -> (IdSigmaPubkey, IdSigmaPrivkey) {
+        match sig_ty {
+            IdSigmaSignatureScheme::Dilithium2 => {
+                // Generate random coins and use them for generation. We have to do this because gen_sig_keypair uses its own RNG
+                let mut coins = DilithiumKeygenCoins::default();
+                rng.fill_bytes(&mut coins);
+                let (pk, sk) = dilithium_gen_sig_keypair_det(coins);
+                (
+                    IdSigmaPubkey::Dilithium2(pk),
+                    IdSigmaPrivkey::Dilithium2(sk),
+                )
+            }
+            IdSigmaSignatureScheme::Ed25519 => {
+                let sk = EdSecretKey::generate(&mut rng);
+                let pk = sk.verifying_key();
+                (IdSigmaPubkey::Ed25519(pk), IdSigmaPrivkey::Ed25519(sk))
+            }
+        }
     }
 
-    fn gen_user_keypair<R: RngCore + CryptoRng>(rng: R) -> (SigPubkey, SigPrivkey) {
+    fn gen_user_keypair<R: RngCore + CryptoRng>(
+        sig_ty: IdSigmaSignatureScheme,
+        rng: R,
+    ) -> (IdSigmaPubkey, IdSigmaPrivkey) {
         // Same thing as above
-        Self::gen_main_keypair(rng)
+        Self::gen_main_keypair(sig_ty, rng)
     }
 
     fn extract<R: RngCore + CryptoRng>(
         _: R,
-        msk: &SigPrivkey,
+        msk: &IdSigmaPrivkey,
         id: &Id,
-        upk: &SigPubkey,
+        upk: &IdSigmaPubkey,
     ) -> SigmaCert {
-        let sig = detached_sign(&[id, upk.as_bytes()].concat(), msk);
+        let sig = msk.sign(&[id, upk.as_bytes()].concat());
         SigmaCert {
             id: id.clone(),
             upk: upk.clone(),
@@ -169,9 +341,9 @@ impl IdentityBasedKeyExchange for IdSigmaR {
     fn new_session<R: RngCore + CryptoRng>(
         mut rng: R,
         ssid: Ssid,
-        mpk: SigPubkey,
+        mpk: IdSigmaPubkey,
         cert: SigmaCert,
-        usk: SigPrivkey,
+        usk: IdSigmaPrivkey,
         role: PartyRole,
     ) -> Self {
         let mut my_nonce = Nonce::default();
@@ -215,10 +387,12 @@ impl IdentityBasedKeyExchange for IdSigmaR {
     }
 
     fn run_sim(&mut self) -> Option<usize> {
+        let sig_ty = self.mpk.kind();
+
         let out = match self.next_step {
             0 => {
                 // Sends a nonce followed by a KEM pubkey
-                Some(Nonce::default().len() + INDCPA_PUBLICKEYBYTES)
+                Some(Nonce::default().len() + KEM_PUBKEY_SIZE)
             }
             1 => {
                 // Sends a nonce followed by an encapsulated key
@@ -226,12 +400,22 @@ impl IdentityBasedKeyExchange for IdSigmaR {
             }
             2 => {
                 // Sends an authenticated ciphertext of (sig, mac, cert). So include that length, plus the length of the authenticated encryption tag
-                Some(sig_size() + 32 + SigmaCert::size() + crate::auth_enc::TAGLEN)
+                Some(
+                    IdSigmaSignature::size(sig_ty)
+                        + 32
+                        + SigmaCert::size(sig_ty)
+                        + crate::auth_enc::TAGLEN,
+                )
             }
             3 => {
                 // Same as above
                 self.done = true;
-                Some(sig_size() + 32 + SigmaCert::size() + crate::auth_enc::TAGLEN)
+                Some(
+                    IdSigmaSignature::size(sig_ty)
+                        + 32
+                        + SigmaCert::size(sig_ty)
+                        + crate::auth_enc::TAGLEN,
+                )
             }
             4 => {
                 // All done
@@ -251,6 +435,8 @@ impl IdentityBasedKeyExchange for IdSigmaR {
         mut rng: R,
         incoming_msg: &[u8],
     ) -> Result<Option<Vec<u8>>, SigmaError> {
+        let sig_ty = self.mpk.kind();
+
         let out = match self.next_step {
             // Generate an ephemeral keypair and send the pubkey
             0 => {
@@ -274,7 +460,7 @@ impl IdentityBasedKeyExchange for IdSigmaR {
                 // Deserialize everything
                 let (nonce, kem_pubkey_bytes) = incoming_msg.split_at(Nonce::default().len());
                 self.nonces.0 = Some(nonce.try_into().unwrap());
-                self.kem_pubkey = Some(INDCPAPublicKey::from_bytes(kem_pubkey_bytes));
+                self.kem_pubkey = Some(KemPubkey::from_bytes(kem_pubkey_bytes));
 
                 // Encapsulate to the pubkey
                 let (shared_secret, encapped_key) = kem_encap(&self.kem_pubkey.as_ref().unwrap());
@@ -334,7 +520,7 @@ impl IdentityBasedKeyExchange for IdSigmaR {
 
                 // Time for some key confirmation. Send the cert, a signature over the transcript, and a MAC over the ID
                 // Now compute the signature over what's happened so far
-                let sig = detached_sign(
+                let sig = self.sig_privkey.sign(
                     &[
                         &[0x00],
                         self.nonces.1.as_ref().unwrap().as_slice(),
@@ -344,7 +530,6 @@ impl IdentityBasedKeyExchange for IdSigmaR {
                         &cert_bytes,
                     ]
                     .concat(),
-                    &self.sig_privkey,
                 );
 
                 // Compute the MAC over the (ssid, ID)
@@ -356,7 +541,7 @@ impl IdentityBasedKeyExchange for IdSigmaR {
                     .into_bytes();
 
                 // Encrypt (sig, mac, cert)
-                let msg_to_encrypt = [sig.as_bytes(), mac.as_slice(), &cert_bytes].concat();
+                let msg_to_encrypt = [&sig.to_bytes(), mac.as_slice(), &cert_bytes].concat();
                 let ciphertext = auth_encrypt(&mut rng, enc_key_a, &msg_to_encrypt);
 
                 // Send the ciphertext
@@ -367,23 +552,21 @@ impl IdentityBasedKeyExchange for IdSigmaR {
                 let ciphertext = incoming_msg;
                 let sig_mac_cert = auth_decrypt(self.enc_keys.as_ref().unwrap().0, ciphertext)?;
                 let (sig_mac, incoming_cert_bytes) =
-                    sig_mac_cert.split_at(sig_mac_cert.len() - SigmaCert::size());
-                let (sig, incoming_mac) = sig_mac.split_at(sig_size());
+                    sig_mac_cert.split_at(sig_mac_cert.len() - SigmaCert::size(sig_ty));
+                let (sig, incoming_mac) = sig_mac.split_at(IdSigmaSignature::size(sig_ty));
 
-                let incoming_sig = DetachedSignature::from_bytes(sig)?;
-                let incoming_cert = SigmaCert::from_bytes(incoming_cert_bytes)?;
+                let incoming_sig = IdSigmaSignature::from_bytes(sig_ty, sig);
+                let incoming_cert = SigmaCert::from_bytes(sig_ty, incoming_cert_bytes)?;
                 self.output_id = Some(incoming_cert.id);
 
                 // Do the verifications. Check that the certificate verifies and that the signature and MAC verify
                 // Check the certificate verifies
-                verify_detached_signature(
-                    &incoming_cert.sig,
+                self.mpk.verify(
                     &[&incoming_cert.id, incoming_cert.upk.as_bytes()].concat(),
-                    &self.mpk,
+                    &incoming_cert.sig,
                 )?;
                 // Check the other signature verifies
-                verify_detached_signature(
-                    &incoming_sig,
+                incoming_cert.upk.verify(
                     &[
                         &[0x00],
                         self.nonces.1.as_ref().unwrap().as_slice(),
@@ -393,7 +576,7 @@ impl IdentityBasedKeyExchange for IdSigmaR {
                         &incoming_cert_bytes,
                     ]
                     .concat(),
-                    &incoming_cert.upk,
+                    &incoming_sig,
                 )?;
                 MyMac::new_from_slice(self.mac_key.as_ref().unwrap())
                     .unwrap()
@@ -403,7 +586,7 @@ impl IdentityBasedKeyExchange for IdSigmaR {
 
                 // Now compute the final message. Compute the signature and MAC, similar to above
                 let my_cert_bytes = self.cert.to_bytes();
-                let sig = detached_sign(
+                let sig = self.sig_privkey.sign(
                     &[
                         &[0x01],
                         self.nonces.0.as_ref().unwrap().as_slice(),
@@ -413,7 +596,6 @@ impl IdentityBasedKeyExchange for IdSigmaR {
                         &my_cert_bytes,
                     ]
                     .concat(),
-                    &self.sig_privkey,
                 );
 
                 // Compute the MAC over the (ssid, ID)
@@ -428,7 +610,7 @@ impl IdentityBasedKeyExchange for IdSigmaR {
                 let ciphertext = auth_encrypt(
                     &mut rng,
                     self.enc_keys.as_ref().unwrap().1,
-                    &[sig.as_bytes(), mac.as_slice(), &my_cert_bytes].concat(),
+                    &[&sig.to_bytes(), mac.as_slice(), &my_cert_bytes].concat(),
                 );
 
                 // This is the last message for this party
@@ -442,23 +624,21 @@ impl IdentityBasedKeyExchange for IdSigmaR {
                 let ciphertext = incoming_msg;
                 let sig_mac_cert = auth_decrypt(self.enc_keys.as_ref().unwrap().1, ciphertext)?;
                 let (sig_mac, incoming_cert_bytes) =
-                    sig_mac_cert.split_at(sig_mac_cert.len() - SigmaCert::size());
-                let (sig, incoming_mac) = sig_mac.split_at(sig_size());
+                    sig_mac_cert.split_at(sig_mac_cert.len() - SigmaCert::size(sig_ty));
+                let (sig, incoming_mac) = sig_mac.split_at(IdSigmaSignature::size(sig_ty));
 
-                let incoming_sig = DetachedSignature::from_bytes(sig)?;
-                let incoming_cert = SigmaCert::from_bytes(incoming_cert_bytes)?;
+                let incoming_sig = IdSigmaSignature::from_bytes(sig_ty, sig);
+                let incoming_cert = SigmaCert::from_bytes(sig_ty, incoming_cert_bytes)?;
                 self.output_id = Some(incoming_cert.id);
 
                 // Do the verifications. Check that that the certificate verifies and that the signature and MAC verify
                 // Check the certificate verifies
-                verify_detached_signature(
-                    &incoming_cert.sig,
+                self.mpk.verify(
                     &[&incoming_cert.id, incoming_cert.upk.as_bytes()].concat(),
-                    &self.mpk,
+                    &incoming_cert.sig,
                 )?;
                 // Check the other signature verifies
-                verify_detached_signature(
-                    &incoming_sig,
+                incoming_cert.upk.verify(
                     &[
                         &[0x01],
                         self.nonces.0.as_ref().unwrap().as_slice(),
@@ -468,7 +648,7 @@ impl IdentityBasedKeyExchange for IdSigmaR {
                         &incoming_cert_bytes,
                     ]
                     .concat(),
-                    &incoming_cert.upk,
+                    &incoming_sig,
                 )?;
                 // Compute the MAC over the (ssid, ID)
                 MyMac::new_from_slice(self.mac_key.as_ref().unwrap())
@@ -501,54 +681,60 @@ mod test {
     fn sigma_r_correctness() {
         let mut rng = rand::thread_rng();
 
-        // Generate the KGC keypair
-        let (mpk, msk) = IdSigmaR::gen_main_keypair(&mut rng);
+        // Test ID-SIGMA-R with Ed25519 and Dilithium2 signature schemes
+        for sig_ty in [
+            IdSigmaSignatureScheme::Ed25519,
+            IdSigmaSignatureScheme::Dilithium2,
+        ] {
+            // Generate the KGC keypair
+            let (mpk, msk) = IdSigmaR::gen_main_keypair(sig_ty, &mut rng);
 
-        // Pick the user IDs randomly
-        let id1 = rng.gen();
-        let id2 = rng.gen();
+            // Pick the user IDs randomly
+            let id1 = rng.gen();
+            let id2 = rng.gen();
 
-        // Have the users generate their keypairs
-        let (upk1, usk1) = IdSigmaR::gen_user_keypair(&mut rng);
-        let (upk2, usk2) = IdSigmaR::gen_user_keypair(&mut rng);
+            // Have the users generate their keypairs
+            let (upk1, usk1) = IdSigmaR::gen_user_keypair(sig_ty, &mut rng);
+            let (upk2, usk2) = IdSigmaR::gen_user_keypair(sig_ty, &mut rng);
 
-        // Have the KGC sign the user's pubkeys
-        let cert1 = IdSigmaR::extract(&mut rng, &msk, &id1, &upk1);
-        let cert2 = IdSigmaR::extract(&mut rng, &msk, &id2, &upk2);
+            // Have the KGC sign the user's pubkeys
+            let cert1 = IdSigmaR::extract(&mut rng, &msk, &id1, &upk1);
+            let cert2 = IdSigmaR::extract(&mut rng, &msk, &id2, &upk2);
 
-        // Start a new session
-        let ssid = rng.gen();
-        let mut user1 = IdSigmaR::new_session(
-            &mut rng,
-            ssid,
-            mpk.clone(),
-            cert1,
-            usk1,
-            PartyRole::Initiator,
-        );
-        let mut user2 = IdSigmaR::new_session(
-            &mut rng,
-            ssid,
-            mpk.clone(),
-            cert2,
-            usk2,
-            PartyRole::Responder,
-        );
+            // Start a new session
+            let ssid = rng.gen();
+            let mut user1 = IdSigmaR::new_session(
+                &mut rng,
+                ssid,
+                mpk.clone(),
+                cert1,
+                usk1,
+                PartyRole::Initiator,
+            );
+            let mut user2 = IdSigmaR::new_session(
+                &mut rng,
+                ssid,
+                mpk.clone(),
+                cert2,
+                usk2,
+                PartyRole::Responder,
+            );
 
-        // Run the session until completion
-        let msg1 = user1.run(&mut rng, &[]).unwrap().unwrap();
-        let msg2 = user2.run(&mut rng, &msg1).unwrap().unwrap();
-        let msg3 = user1.run(&mut rng, &msg2).unwrap().unwrap();
-        let msg4 = user2.run(&mut rng, &msg3).unwrap().unwrap();
-        let msg5 = user1.run(&mut rng, &msg4).unwrap();
+            // Run the session until completion
+            let msg1 = user1.run(&mut rng, &[]).unwrap().unwrap();
+            let msg2 = user2.run(&mut rng, &msg1).unwrap().unwrap();
+            let msg3 = user1.run(&mut rng, &msg2).unwrap().unwrap();
+            let msg4 = user2.run(&mut rng, &msg3).unwrap().unwrap();
+            let msg5 = user1.run(&mut rng, &msg4).unwrap();
 
-        let (user1_interlocutor, user1_key) = user1.finalize();
-        let (user2_interlocutor, user2_key) = user2.finalize();
+            let (user1_interlocutor, user1_key) = user1.finalize();
+            let (user2_interlocutor, user2_key) = user2.finalize();
 
-        // Ensure that there are no more messages to be sent, that the parties believe they're talking to each other, and that they have the same key
-        assert!(msg5.is_none());
-        assert!(user1_interlocutor == id2);
-        assert!(user2_interlocutor == id1);
-        assert_eq!(user1_key, user2_key);
+            // Ensure that there are no more messages to be sent, that the parties believe they're talking to each other, and that they have the same key
+            assert!(msg5.is_none());
+            assert!(user1_interlocutor == id2);
+            assert!(user2_interlocutor == id1);
+            assert_eq!(user1_key, user2_key);
+        }
     }
 }

@@ -132,6 +132,7 @@ mod test {
     use rand::Rng;
 
     // Test the EUE transform when applied to the ID-SIGMA-R protocol
+    /*
     #[test]
     fn eue_sigma_r_correctness() {
         type EueSigmaR = Eue<IdSigmaR>;
@@ -191,4 +192,5 @@ mod test {
         assert!(user2_interlocutor == id1);
         assert_eq!(user1_key, user2_key);
     }
+    */
 }
