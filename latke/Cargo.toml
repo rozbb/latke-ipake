@@ -23,6 +23,7 @@ x25519-dalek = { version = "2.0.0", features = ["static_secrets", "reusable_secr
 rand_chacha = "0.3.1"
 crypto-permutation = "0.1.0"
 deck-farfalle = { version = "0.1.0", features = ["kravatte"] }
+chacha20 = "0.9.1"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

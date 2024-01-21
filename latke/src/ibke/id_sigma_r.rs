@@ -1,7 +1,7 @@
 //! Implements the SIGMA-R protocol described in the [SIGMA paper](https://iacr.org/archive/crypto2003/27290399/27290399.pdf), modified  by [Peikert](https://eprint.iacr.org/2014/070) to use KEMs, and transformed using the AKE-to-IBKE transform describe in LATKE.
 
 use crate::{
-    auth_enc::{auth_decrypt, auth_encrypt, AuthEncKey},
+    auth_enc::{auth_decrypt, auth_encrypt, AuthEncKey, ZERO_AUTH_ENC_KEY},
     AsBytes, Id, IdentityBasedKeyExchange, MyKdf, MyMac, Nonce, PartyRole, SessKey, Ssid,
 };
 
@@ -272,7 +272,7 @@ struct IdSigmaR {
     kem_privkey: Option<KemPrivkey>,
     encapped_key: Option<EncappedKey>,
     mac_key: Option<[u8; 32]>,
-    enc_keys: Option<([u8; 32], [u8; 32])>,
+    enc_keys: Option<(AuthEncKey, AuthEncKey)>,
 
     // The output of a post-specified peer IBKE is (ID, session_key)
     output_id: Option<Id>,
@@ -460,8 +460,8 @@ impl IdSigmaR {
                 // Generate the session key and the MAC key from the shared secret
                 let mut output_key = SessKey::default();
                 let mut mac_key = [0u8; 32];
-                let mut enc_key_a = AuthEncKey::default();
-                let mut enc_key_b = AuthEncKey::default();
+                let mut enc_key_a = ZERO_AUTH_ENC_KEY;
+                let mut enc_key_b = ZERO_AUTH_ENC_KEY;
                 let hk = MyKdf::from_prk(shared_secret.as_slice()).unwrap();
                 hk.expand(b"output_key", &mut output_key).unwrap();
                 hk.expand(b"mac_key", &mut mac_key).unwrap();
@@ -496,8 +496,8 @@ impl IdSigmaR {
                 );
                 let mut output_key = SessKey::default();
                 let mut mac_key = [0u8; 32];
-                let mut enc_key_a = AuthEncKey::default();
-                let mut enc_key_b = AuthEncKey::default();
+                let mut enc_key_a = ZERO_AUTH_ENC_KEY;
+                let mut enc_key_b = ZERO_AUTH_ENC_KEY;
                 let hk = MyKdf::from_prk(shared_secret.as_slice()).unwrap();
                 hk.expand(b"output_key", &mut output_key).unwrap();
                 hk.expand(b"mac_key", &mut mac_key).unwrap();

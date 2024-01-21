@@ -1,7 +1,7 @@
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
-    auth_enc::{auth_decrypt, auth_encrypt, AuthEncKey},
+    auth_enc::{auth_decrypt, auth_encrypt, AuthEncKey, ZERO_AUTH_ENC_KEY},
     Id, IdentityBasedKeyExchange, MyKdf, PartyRole, SessKey, Ssid,
 };
 
@@ -44,7 +44,7 @@ impl<I: IdentityBasedKeyExchange> Eue<I> {
 
         // Derive the initial chain key and message keys
         let mut chain_key = [0u8; 32];
-        let mut msg_key = AuthEncKey::default();
+        let mut msg_key = ZERO_AUTH_ENC_KEY;
         let hk = MyKdf::from_prk(&initial_key).unwrap();
         hk.expand_multi_info(&[&b"init chain key"[..], &ssid[..]], &mut chain_key)
             .unwrap();

@@ -4,16 +4,19 @@ use crate::MyMac;
 
 use aes::cipher::{KeyIvInit, StreamCipher};
 use blake2::digest::OutputSizeUser;
+use chacha20::ChaCha20;
 use hkdf::hmac::digest::{typenum::Unsigned, Mac, MacError};
 use rand_core::{CryptoRng, RngCore};
 
-/// Use AES-128 in CTR mode with a 32-bit little-endian counter. Our messages are very small, so 32 bits is more than enough.
-type MyCipher = ctr::Ctr32LE<aes::Aes128>;
+type MyCipher = ChaCha20;
 
 pub(crate) const TAGLEN: usize = <MyMac as OutputSizeUser>::OutputSize::USIZE;
 
-/// A key for authenticated encryption. This is an AES-128 key followed by a 128-bit HMAC key.
-pub(crate) type AuthEncKey = [u8; 32];
+/// A key for authenticated encryption. This is a 256-bit encryption key followed by a 256-bit HMAC key.
+pub(crate) type AuthEncKey = [u8; 64];
+
+// Fixed size arrays don't impl Default, so we have to do this manually
+pub(crate) const ZERO_AUTH_ENC_KEY: AuthEncKey = [0u8; 64];
 
 /// Performs AES-128-CTR + HMAC authenticated encryption over the given message.
 pub(crate) fn auth_encrypt<R: RngCore + CryptoRng>(
@@ -21,18 +24,18 @@ pub(crate) fn auth_encrypt<R: RngCore + CryptoRng>(
     key: AuthEncKey,
     msg: &[u8],
 ) -> Vec<u8> {
-    let (enc_key, mac_key) = key.split_at(16);
+    let (enc_key, mac_key) = key.split_at(32);
 
-    let mut iv = [0u8; 16];
-    rng.fill_bytes(&mut iv);
+    let mut nonce = [0u8; 12];
+    rng.fill_bytes(&mut nonce);
 
-    // Encrypt the message with AES-CTR
+    // Encrypt the message with the stream cipher
     let mut ciphertext = msg.to_vec();
-    let mut cipher = MyCipher::new(enc_key.try_into().unwrap(), &iv.into());
+    let mut cipher = MyCipher::new(enc_key.try_into().unwrap(), &nonce.into());
     cipher.apply_keystream(&mut ciphertext);
 
     // Append the IV to the ciphertext
-    ciphertext.extend(&iv);
+    ciphertext.extend(&nonce);
 
     // Compute the MAC and append it to the ciphertext
     let mac = MyMac::new_from_slice(&mac_key)
@@ -48,20 +51,20 @@ pub(crate) fn auth_encrypt<R: RngCore + CryptoRng>(
 /// Performs AES-128-CTR + HMAC authenticated decryption over the given ciphertext.
 pub(crate) fn auth_decrypt(key: AuthEncKey, sealed_msg: &[u8]) -> Result<Vec<u8>, MacError> {
     // Deserialize the key and split the MAC and IV from the ciphertext
-    let (enc_key, mac_key) = key.split_at(16);
+    let (enc_key, mac_key) = key.split_at(32);
     let mac_size = <MyMac as OutputSizeUser>::output_size();
-    let (ciphertext_and_iv, mac) = sealed_msg.split_at(sealed_msg.len() - mac_size);
-    let (ciphertext, iv) = ciphertext_and_iv.split_at(ciphertext_and_iv.len() - 16);
+    let (ciphertext_and_nonce, mac) = sealed_msg.split_at(sealed_msg.len() - mac_size);
+    let (ciphertext, nonce) = ciphertext_and_nonce.split_at(ciphertext_and_nonce.len() - 12);
 
     // Check the MAC
     MyMac::new_from_slice(&mac_key)
         .unwrap()
-        .chain_update(&ciphertext_and_iv)
+        .chain_update(&ciphertext_and_nonce)
         .verify(mac.try_into().unwrap())?;
 
-    // Decrypt the message with AES-CTR
+    // Decrypt the message with the stream cipher
     let mut plaintext = ciphertext.to_vec();
-    let mut cipher = MyCipher::new(enc_key.try_into().unwrap(), iv.try_into().unwrap());
+    let mut cipher = MyCipher::new(enc_key.try_into().unwrap(), nonce.try_into().unwrap());
     cipher.apply_keystream(&mut plaintext);
 
     Ok(plaintext)
@@ -78,7 +81,8 @@ mod test {
         let mut rng = rand::thread_rng();
 
         // Make a random encryption key
-        let key = rng.gen();
+        let mut key = ZERO_AUTH_ENC_KEY;
+        rng.fill_bytes(&mut key);
 
         // Make a random message of random length up to 2^16
         let msg_len: u16 = rng.gen();
@@ -97,7 +101,8 @@ mod test {
         let mut rng = rand::thread_rng();
 
         // Make a random encryption key
-        let key = rng.gen();
+        let mut key = ZERO_AUTH_ENC_KEY;
+        rng.fill_bytes(&mut key);
 
         // Make a random message of random length up to 2^16
         let msg_len: u16 = rng.gen();
