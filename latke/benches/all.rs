@@ -8,7 +8,7 @@ use latke::{
     },
     latke::Latke,
     pake::{cake::Cake, kc_spake2::KcSpake2},
-    IdentityBasedKeyExchange, Pake, PartyRole,
+    Id, IdentityBasedKeyExchange, Pake, PartyRole,
 };
 
 use criterion::{criterion_group, criterion_main, Criterion};
@@ -99,8 +99,11 @@ fn bench_chip(c: &mut Criterion) {
     let pwfile1 = C::gen_pwfile(&mut rng, password.to_vec(), id1);
     let pwfile2 = C::gen_pwfile(&mut rng, password.to_vec(), id2);
 
+    let mut tot_bytes = 0;
+
     c.bench_function("Chip[KcSpake2]", |b| {
         b.iter(|| {
+            tot_bytes = 0;
             let mut user1 =
                 C::new_session(&mut rng, ssid, pwfile1.clone(), PartyRole::Initiator, id2);
             let mut user2 =
@@ -110,6 +113,9 @@ fn bench_chip(c: &mut Criterion) {
             let mut cur_step = 0;
             let mut cur_msg = Some(Vec::new());
             while cur_msg.is_some() {
+                // Record the message size
+                tot_bytes += cur_msg.as_ref().map(|s| s.len()).unwrap_or(0);
+
                 cur_msg = if cur_step % 2 == 0 {
                     user1.run(&mut rng, &cur_msg.unwrap()).unwrap()
                 } else {
@@ -120,6 +126,8 @@ fn bench_chip(c: &mut Criterion) {
             }
         })
     });
+
+    println!("Chip[KcSpake2] comms: {tot_bytes}B");
 }
 
 fn bench_latke_generic<I: IdentityBasedKeyExchange, P: Pake>(name: &str, c: &mut Criterion) {
@@ -133,8 +141,10 @@ fn bench_latke_generic<I: IdentityBasedKeyExchange, P: Pake>(name: &str, c: &mut
     let pwfile2 = Latke::<I, P>::gen_pwfile(&mut rng, b"password", &id2);
 
     // Run through the whole protocol
+    let mut tot_bytes = 0;
     c.bench_function(name, |b| {
         b.iter(|| {
+            tot_bytes = 0;
             let mut user1 =
                 Latke::<I, P>::new_session(&mut rng, ssid, pwfile1.clone(), PartyRole::Initiator);
             let mut user2 =
@@ -143,6 +153,8 @@ fn bench_latke_generic<I: IdentityBasedKeyExchange, P: Pake>(name: &str, c: &mut
             let mut cur_step = 0;
             let mut cur_msg = Vec::new();
             loop {
+                tot_bytes += cur_msg.len();
+
                 let user = if cur_step % 2 == 0 {
                     &mut user1
                 } else {
@@ -160,6 +172,11 @@ fn bench_latke_generic<I: IdentityBasedKeyExchange, P: Pake>(name: &str, c: &mut
             }
         })
     });
+
+    // For consistency, we do not include identity strings in the message size. Every IBKE we use passes 2 identity strings.
+    tot_bytes -= 2 * Id::default().len();
+
+    println!("{name} comms: {tot_bytes}B");
 }
 
 fn bench_latke(c: &mut Criterion) {
@@ -170,5 +187,5 @@ fn bench_latke(c: &mut Criterion) {
     bench_latke_generic::<IdSigmaRDilithium2, Cake>("Latke[Cake,IdSigmaRDilithium2]", c);
 }
 
-criterion_group!(benches, bench_pake, bench_chip, bench_latke);
+criterion_group!(benches, bench_chip, bench_latke);
 criterion_main!(benches);

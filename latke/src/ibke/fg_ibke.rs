@@ -187,7 +187,7 @@ impl IdentityBasedKeyExchange for FgIbkeC {
                 )
             }
             2 => {
-                // Receive id, X, eph_pk
+                // Receive id, X, eph_pk, mac
                 let rest = incoming_msg;
                 let (other_id, rest) = rest.split_at(Id::default().len());
                 let (incoming_X_bytes, rest) = rest.split_at(32);
@@ -327,7 +327,7 @@ mod test {
         // Check that the users agree on the interlocutor and the session key
         assert!(user1_interlocutor == id2);
         assert!(user2_interlocutor == id1);
-        assert_eq!(dbg!(user1_key), user2_key);
+        assert_eq!(user1_key, user2_key);
     }
 }
 
