@@ -2,9 +2,11 @@
 
 use crate::MyMac;
 
-use aes::cipher::{KeyIvInit, StreamCipher};
 use blake2::digest::OutputSizeUser;
-use chacha20::ChaCha20;
+use chacha20::{
+    cipher::{KeyIvInit, StreamCipher},
+    ChaCha20,
+};
 use hkdf::hmac::digest::{typenum::Unsigned, Mac, MacError};
 use rand_core::{CryptoRng, RngCore};
 
