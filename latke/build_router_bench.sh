@@ -6,4 +6,4 @@
 #     https://github.com/FiloSottile/homebrew-musl-cross
 # The change to the cargo config is necessary.
 
-cargo bench --no-run --target aarch64-unknown-linux-musl -- -C target-cpu=cortex-a53
+cargo bench --no-run --target aarch64-unknown-linux-musl -- -C target-cpu=cortex-a53 -C --target-feature=-neon,-sha2
