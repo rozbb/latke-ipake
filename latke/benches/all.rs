@@ -96,6 +96,10 @@ fn bench_chip(c: &mut Criterion) {
 
     let password = b"password";
 
+    c.bench_function("Setup Chip[KcSpake2]", |b| {
+        b.iter(|| C::gen_pwfile(&mut rng, password.to_vec(), id1))
+    });
+
     let pwfile1 = C::gen_pwfile(&mut rng, password.to_vec(), id1);
     let pwfile2 = C::gen_pwfile(&mut rng, password.to_vec(), id2);
 
@@ -136,6 +140,10 @@ fn bench_latke_generic<I: IdentityBasedKeyExchange, P: Pake>(name: &str, c: &mut
     let id1 = rng.gen();
     let id2 = rng.gen();
     let ssid = rng.gen();
+
+    c.bench_function(&format!("Setup {name}"), |b| {
+        b.iter(|| Latke::<I, P>::gen_pwfile(&mut rng, b"password", &id1))
+    });
 
     let pwfile1 = Latke::<I, P>::gen_pwfile(&mut rng, b"password", &id1);
     let pwfile2 = Latke::<I, P>::gen_pwfile(&mut rng, b"password", &id2);
