@@ -207,19 +207,19 @@ fn bench_latke_generic<I: IdentityBasedKeyExchange, P: Pake>(
 }
 
 fn bench_latke(c: &mut Criterion) {
-    bench_latke_generic::<FgIbkeC, Cpace>("Latke[Cpace,FgIbkeC]", c, true);
-    bench_latke_generic::<IdSigDh, Cpace>("Latke[Cpace,IdSigDh]", c, true);
-    bench_latke_generic::<IdHmqvC, Cpace>("Latke[Cpace,IdHmqvC]", c, true);
-    bench_latke_generic::<FgIbkeC, KcSpake2>("Latke[KcSpake2,FgIbkeC]", c, true);
-    bench_latke_generic::<IdSigDh, KcSpake2>("Latke[KcSpake2,IdSigDh]", c, true);
-    bench_latke_generic::<IdHmqvC, KcSpake2>("Latke[KcSpake2,IdHmqvC]", c, true);
-    bench_latke_generic::<IdSigmaREd25519, Cake>("Latke[Cake,IdSigmaREd25519]", c, false);
-    bench_latke_generic::<IdSigmaRDilithium2, Cake>("Latke[Cake,IdSigmaRDilithium2]", c, false);
+    bench_latke_generic::<FgIbkeC, Cpace>("LatkePre[Cpace,FgIbkeC]", c, true);
+    bench_latke_generic::<IdSigDh, Cpace>("LatkePre[Cpace,IdSigDh]", c, true);
+    bench_latke_generic::<IdHmqvC, Cpace>("LatkePre[Cpace,IdHmqvC]", c, true);
+    bench_latke_generic::<FgIbkeC, KcSpake2>("LatkePre[KcSpake2,FgIbkeC]", c, true);
+    bench_latke_generic::<IdSigDh, KcSpake2>("LatkePre[KcSpake2,IdSigDh]", c, true);
+    bench_latke_generic::<IdHmqvC, KcSpake2>("LatkePre[KcSpake2,IdHmqvC]", c, true);
+    bench_latke_generic::<IdSigmaREd25519, Cake>("LatkePost[Cake,IdSigmaREd25519]", c, false);
+    bench_latke_generic::<IdSigmaRDilithium2, Cake>("LatkePost[Cake,IdSigmaRDilithium2]", c, false);
 }
 
 fn bench_chip(c: &mut Criterion) {
-    bench_chip_generic::<Cpace>("Chip[Cpace]", c);
-    bench_chip_generic::<KcSpake2>("Chip[KcSpake2]", c);
+    bench_chip_generic::<Cpace>("Chip[Cpace,FgIbke]", c);
+    bench_chip_generic::<KcSpake2>("Chip[KcSpake2,FgIbke]", c);
 }
 
 criterion_group!(benches, bench_chip, bench_latke);
