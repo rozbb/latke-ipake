@@ -7,7 +7,7 @@ use latke::{
         id_sigma_r::{IdSigmaRDilithium2, IdSigmaREd25519},
     },
     latke::Latke,
-    pake::{cake::Cake, kc_spake2::KcSpake2},
+    pake::{cake::Cake, cpace::Cpace, kc_spake2::KcSpake2},
     Id, IdentityBasedKeyExchange, Pake, PartyRole,
 };
 
@@ -83,8 +83,7 @@ fn bench_pake(c: &mut Criterion) {
     });
 }
 
-fn bench_chip(c: &mut Criterion) {
-    type C = Chip<KcSpake2>;
+fn bench_chip_generic<P: Pake>(name: &str, c: &mut Criterion) {
     let mut rng = rand::thread_rng();
 
     // Create random user IDs
@@ -96,22 +95,22 @@ fn bench_chip(c: &mut Criterion) {
 
     let password = b"password";
 
-    c.bench_function("Setup Chip[KcSpake2]", |b| {
-        b.iter(|| C::gen_pwfile(&mut rng, password.to_vec(), id1))
+    c.bench_function(&format!("Setup {name}"), |b| {
+        b.iter(|| Chip::<P>::gen_pwfile(&mut rng, password.to_vec(), id1))
     });
 
-    let pwfile1 = C::gen_pwfile(&mut rng, password.to_vec(), id1);
-    let pwfile2 = C::gen_pwfile(&mut rng, password.to_vec(), id2);
+    let pwfile1 = Chip::<P>::gen_pwfile(&mut rng, password.to_vec(), id1);
+    let pwfile2 = Chip::<P>::gen_pwfile(&mut rng, password.to_vec(), id2);
 
     let mut tot_bytes = 0;
 
-    c.bench_function("Chip[KcSpake2]", |b| {
+    c.bench_function(name, |b| {
         b.iter(|| {
             tot_bytes = 0;
             let mut user1 =
-                C::new_session(&mut rng, ssid, pwfile1.clone(), PartyRole::Initiator, id2);
+                Chip::<P>::new_session(&mut rng, ssid, pwfile1.clone(), PartyRole::Initiator, id2);
             let mut user2 =
-                C::new_session(&mut rng, ssid, pwfile2.clone(), PartyRole::Responder, id1);
+                Chip::<P>::new_session(&mut rng, ssid, pwfile2.clone(), PartyRole::Responder, id1);
 
             // Run through the whole protocol
             let mut cur_step = 0;
@@ -131,7 +130,7 @@ fn bench_chip(c: &mut Criterion) {
         })
     });
 
-    println!("Chip[KcSpake2] comms: {tot_bytes}B");
+    println!("{name} comms: {tot_bytes}B");
 }
 
 fn bench_latke_generic<I: IdentityBasedKeyExchange, P: Pake>(name: &str, c: &mut Criterion) {
@@ -188,11 +187,19 @@ fn bench_latke_generic<I: IdentityBasedKeyExchange, P: Pake>(name: &str, c: &mut
 }
 
 fn bench_latke(c: &mut Criterion) {
+    bench_latke_generic::<FgIbkeC, Cpace>("Latke[Cpace,FgIbkeC]", c);
+    bench_latke_generic::<IdSigDh, Cpace>("Latke[Cpace,IdSigDh]", c);
+    bench_latke_generic::<IdHmqvC, Cpace>("Latke[Cpace,IdHmqvC]", c);
     bench_latke_generic::<FgIbkeC, KcSpake2>("Latke[KcSpake2,FgIbkeC]", c);
     bench_latke_generic::<IdSigDh, KcSpake2>("Latke[KcSpake2,IdSigDh]", c);
     bench_latke_generic::<IdHmqvC, KcSpake2>("Latke[KcSpake2,IdHmqvC]", c);
     bench_latke_generic::<IdSigmaREd25519, Cake>("Latke[Cake,IdSigmaREd25519]", c);
     bench_latke_generic::<IdSigmaRDilithium2, Cake>("Latke[Cake,IdSigmaRDilithium2]", c);
+}
+
+fn bench_chip(c: &mut Criterion) {
+    bench_chip_generic::<Cpace>("Chip[Cpace]", c);
+    bench_chip_generic::<KcSpake2>("Chip[KcSpake2]", c);
 }
 
 criterion_group!(benches, bench_chip, bench_latke);
