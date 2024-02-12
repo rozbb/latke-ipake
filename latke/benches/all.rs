@@ -6,7 +6,7 @@ use latke::{
         id_sig_dh::IdSigDh,
         id_sigma_r::{IdSigmaRDilithium2, IdSigmaREd25519},
     },
-    latke::Latke,
+    latke::{Latke, PeerModel},
     pake::{cake::Cake, cpace::Cpace, kc_spake2::KcSpake2},
     Id, IdentityBasedKeyExchange, Pake, PartyRole,
 };
@@ -133,7 +133,11 @@ fn bench_chip_generic<P: Pake>(name: &str, c: &mut Criterion) {
     println!("{name} comms: {tot_bytes}B");
 }
 
-fn bench_latke_generic<I: IdentityBasedKeyExchange, P: Pake>(name: &str, c: &mut Criterion) {
+fn bench_latke_generic<I: IdentityBasedKeyExchange, P: Pake>(
+    name: &str,
+    c: &mut Criterion,
+    is_latke_pre: bool,
+) {
     let mut rng = rand::thread_rng();
 
     let id1 = rng.gen();
@@ -147,15 +151,31 @@ fn bench_latke_generic<I: IdentityBasedKeyExchange, P: Pake>(name: &str, c: &mut
     let pwfile1 = Latke::<I, P>::gen_pwfile(&mut rng, b"password", &id1);
     let pwfile2 = Latke::<I, P>::gen_pwfile(&mut rng, b"password", &id2);
 
+    let (peer1, peer2) = if is_latke_pre {
+        (PeerModel::PreSpecified(id2), PeerModel::PreSpecified(id1))
+    } else {
+        (PeerModel::PostSpecified, PeerModel::PostSpecified)
+    };
+
     // Run through the whole protocol
     let mut tot_bytes = 0;
     c.bench_function(name, |b| {
         b.iter(|| {
             tot_bytes = 0;
-            let mut user1 =
-                Latke::<I, P>::new_session(&mut rng, ssid, pwfile1.clone(), PartyRole::Initiator);
-            let mut user2 =
-                Latke::<I, P>::new_session(&mut rng, ssid, pwfile2.clone(), PartyRole::Responder);
+            let mut user1 = Latke::<I, P>::new_session(
+                &mut rng,
+                ssid,
+                pwfile1.clone(),
+                PartyRole::Initiator,
+                peer1,
+            );
+            let mut user2 = Latke::<I, P>::new_session(
+                &mut rng,
+                ssid,
+                pwfile2.clone(),
+                PartyRole::Responder,
+                peer2,
+            );
 
             let mut cur_step = 0;
             let mut cur_msg = Vec::new();
@@ -187,14 +207,14 @@ fn bench_latke_generic<I: IdentityBasedKeyExchange, P: Pake>(name: &str, c: &mut
 }
 
 fn bench_latke(c: &mut Criterion) {
-    bench_latke_generic::<FgIbkeC, Cpace>("Latke[Cpace,FgIbkeC]", c);
-    bench_latke_generic::<IdSigDh, Cpace>("Latke[Cpace,IdSigDh]", c);
-    bench_latke_generic::<IdHmqvC, Cpace>("Latke[Cpace,IdHmqvC]", c);
-    bench_latke_generic::<FgIbkeC, KcSpake2>("Latke[KcSpake2,FgIbkeC]", c);
-    bench_latke_generic::<IdSigDh, KcSpake2>("Latke[KcSpake2,IdSigDh]", c);
-    bench_latke_generic::<IdHmqvC, KcSpake2>("Latke[KcSpake2,IdHmqvC]", c);
-    bench_latke_generic::<IdSigmaREd25519, Cake>("Latke[Cake,IdSigmaREd25519]", c);
-    bench_latke_generic::<IdSigmaRDilithium2, Cake>("Latke[Cake,IdSigmaRDilithium2]", c);
+    bench_latke_generic::<FgIbkeC, Cpace>("Latke[Cpace,FgIbkeC]", c, true);
+    bench_latke_generic::<IdSigDh, Cpace>("Latke[Cpace,IdSigDh]", c, true);
+    bench_latke_generic::<IdHmqvC, Cpace>("Latke[Cpace,IdHmqvC]", c, true);
+    bench_latke_generic::<FgIbkeC, KcSpake2>("Latke[KcSpake2,FgIbkeC]", c, true);
+    bench_latke_generic::<IdSigDh, KcSpake2>("Latke[KcSpake2,IdSigDh]", c, true);
+    bench_latke_generic::<IdHmqvC, KcSpake2>("Latke[KcSpake2,IdHmqvC]", c, true);
+    bench_latke_generic::<IdSigmaREd25519, Cake>("Latke[Cake,IdSigmaREd25519]", c, false);
+    bench_latke_generic::<IdSigmaRDilithium2, Cake>("Latke[Cake,IdSigmaRDilithium2]", c, false);
 }
 
 fn bench_chip(c: &mut Criterion) {

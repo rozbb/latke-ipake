@@ -56,6 +56,11 @@ pub trait Pake {
     fn finalize(&self) -> SessKey;
 }
 
+/// Every certificate must have a way to get the user's ID
+pub trait IdCertificate: Clone {
+    fn id(&self) -> Id;
+}
+
 /// An identity based key exchange protocol in the style of the AKE-to-IBKE transform described in LATKE.
 /// The only thing of note is that users generate their own user keypair, and `extract` takes the user public key as auxiliary data.
 pub trait IdentityBasedKeyExchange {
@@ -63,7 +68,7 @@ pub trait IdentityBasedKeyExchange {
     type MainPrivkey;
     type UserPubkey;
     type UserPrivkey: Clone;
-    type Certificate: Clone;
+    type Certificate: IdCertificate;
     type Error: core::fmt::Debug;
 
     /// Generates the main keypair for the key generation center (KGC)

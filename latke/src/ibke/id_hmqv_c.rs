@@ -1,6 +1,8 @@
 //! The HMQV-C protocol, due to [Krawczyk](https://eprint.iacr.org/2005/176), with the AKE-to-IBKE transformation applied
 
-use crate::{Id, IdentityBasedKeyExchange, MyHash512, MyKdf, PartyRole, SessKey, Ssid};
+use crate::{
+    Id, IdCertificate, IdentityBasedKeyExchange, MyHash512, MyKdf, PartyRole, SessKey, Ssid,
+};
 
 use blake2::digest::MacError;
 use curve25519_dalek::{ristretto::CompressedRistretto, RistrettoPoint, Scalar};
@@ -52,6 +54,12 @@ impl IdHmqvCCert {
 
     fn size() -> usize {
         Id::default().len() + 32 + Signature::BYTE_SIZE
+    }
+}
+
+impl IdCertificate for IdHmqvCCert {
+    fn id(&self) -> Id {
+        self.id
     }
 }
 

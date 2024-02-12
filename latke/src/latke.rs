@@ -1,8 +1,8 @@
 //! Implements the LATKE iPAKE
 
 use crate::{
-    eue_transform::Eue, AsBytes, Id, IdentityBasedKeyExchange, MyHash256, MyKdfExtract, Pake,
-    PartyRole, SessKey, Ssid,
+    eue_transform::Eue, AsBytes, Id, IdCertificate, IdentityBasedKeyExchange, MyHash256,
+    MyKdfExtract, Pake, PartyRole, SessKey, Ssid,
 };
 
 use hkdf::hmac::digest::Digest;
@@ -37,6 +37,12 @@ impl<I: IdentityBasedKeyExchange> Clone for LatkePwfile<I> {
     }
 }
 
+#[derive(Copy, Clone)]
+pub enum PeerModel {
+    PreSpecified(Id),
+    PostSpecified,
+}
+
 impl<I: IdentityBasedKeyExchange, P: Pake> Latke<I, P> {
     pub fn gen_pwfile<R: RngCore + CryptoRng>(
         mut rng: R,
@@ -61,9 +67,22 @@ impl<I: IdentityBasedKeyExchange, P: Pake> Latke<I, P> {
         ssid: Ssid,
         pwfile: LatkePwfile<I>,
         role: PartyRole,
+        peer: PeerModel,
     ) -> Self {
-        // Start the PAKE over self.mpk
-        let pake_state = P::new(&mut rng, ssid, pwfile.mpk.as_bytes(), role);
+        // If we don't know the other party's identity, start the PAKE over self.mpk
+
+        let pake_state = match peer {
+            PeerModel::PostSpecified => P::new(&mut rng, ssid, pwfile.mpk.as_bytes(), role),
+            PeerModel::PreSpecified(id) => {
+                let ids = if role == PartyRole::Initiator {
+                    (pwfile.cert.id(), id)
+                } else {
+                    (id, pwfile.cert.id())
+                };
+                let pake_input = [pwfile.mpk.as_bytes(), &ids.0[..], &ids.1[..]].concat();
+                P::new(&mut rng, ssid, &pake_input, role)
+            }
+        };
 
         Self {
             ssid,
@@ -190,45 +209,54 @@ mod test {
     fn latke_correctness_generic<I: IdentityBasedKeyExchange, P: Pake>() {
         let mut rng = rand::thread_rng();
 
-        let id1 = rng.gen();
-        let id2 = rng.gen();
-        let ssid = rng.gen();
+        for is_latke_pre in [false, true] {
+            let id1 = rng.gen();
+            let id2 = rng.gen();
+            let ssid = rng.gen();
 
-        let pwfile1 = Latke::<I, P>::gen_pwfile(&mut rng, b"password", &id1);
-        let pwfile2 = Latke::<I, P>::gen_pwfile(&mut rng, b"password", &id2);
+            let pwfile1 = Latke::<I, P>::gen_pwfile(&mut rng, b"password", &id1);
+            let pwfile2 = Latke::<I, P>::gen_pwfile(&mut rng, b"password", &id2);
 
-        // The users' mpk values are a function of the password, so they should be the same
-        assert!(pwfile1.mpk.as_bytes() == pwfile2.mpk.as_bytes());
+            // The users' mpk values are a function of the password, so they should be the same
+            assert!(pwfile1.mpk.as_bytes() == pwfile2.mpk.as_bytes());
 
-        let mut user1 = Latke::<I, P>::new_session(&mut rng, ssid, pwfile1, PartyRole::Initiator);
-        let mut user2 = Latke::<I, P>::new_session(&mut rng, ssid, pwfile2, PartyRole::Responder);
-
-        // Run through the whole protocol
-        let mut cur_step = 0;
-        let mut cur_msg = Vec::new();
-        loop {
-            let user = if cur_step % 2 == 0 {
-                &mut user1
+            let (peer1, peer2) = if is_latke_pre {
+                (PeerModel::PreSpecified(id2), PeerModel::PreSpecified(id1))
             } else {
-                &mut user2
+                (PeerModel::PostSpecified, PeerModel::PostSpecified)
             };
+            let mut user1 =
+                Latke::<I, P>::new_session(&mut rng, ssid, pwfile1, PartyRole::Initiator, peer1);
+            let mut user2 =
+                Latke::<I, P>::new_session(&mut rng, ssid, pwfile2, PartyRole::Responder, peer2);
 
-            if user.is_done() {
-                // If it's this user's turn to talk, and it's done, then the whole protocol is done
-                break;
-            } else {
-                cur_msg = user.run(&mut rng, &cur_msg).unwrap_or(Vec::new());
+            // Run through the whole protocol
+            let mut cur_step = 0;
+            let mut cur_msg = Vec::new();
+            loop {
+                let user = if cur_step % 2 == 0 {
+                    &mut user1
+                } else {
+                    &mut user2
+                };
+
+                if user.is_done() {
+                    // If it's this user's turn to talk, and it's done, then the whole protocol is done
+                    break;
+                } else {
+                    cur_msg = user.run(&mut rng, &cur_msg).unwrap_or(Vec::new());
+                }
+
+                cur_step += 1;
             }
 
-            cur_step += 1;
+            let (user1_interlocutor, user1_key) = user1.finalize();
+            let (user2_interlocutor, user2_key) = user2.finalize();
+
+            // Check that the users agree on the interlocutor and the session key
+            assert!(user1_interlocutor == id2);
+            assert!(user2_interlocutor == id1);
+            assert_eq!(user1_key, user2_key);
         }
-
-        let (user1_interlocutor, user1_key) = user1.finalize();
-        let (user2_interlocutor, user2_key) = user2.finalize();
-
-        // Check that the users agree on the interlocutor and the session key
-        assert!(user1_interlocutor == id2);
-        assert!(user2_interlocutor == id1);
-        assert_eq!(user1_key, user2_key);
     }
 }

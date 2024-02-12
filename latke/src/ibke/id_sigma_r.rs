@@ -2,7 +2,8 @@
 
 use crate::{
     auth_enc::{auth_decrypt, auth_encrypt, AuthEncKey, ZERO_AUTH_ENC_KEY},
-    AsBytes, Id, IdentityBasedKeyExchange, MyKdf, MyMac, Nonce, PartyRole, SessKey, Ssid,
+    AsBytes, Id, IdCertificate, IdentityBasedKeyExchange, MyKdf, MyMac, Nonce, PartyRole, SessKey,
+    Ssid,
 };
 
 use ed25519_dalek::{
@@ -250,6 +251,12 @@ impl SigmaCert {
             upk,
             sig,
         })
+    }
+}
+
+impl IdCertificate for SigmaCert {
+    fn id(&self) -> Id {
+        self.id
     }
 }
 

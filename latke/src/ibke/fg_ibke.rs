@@ -7,7 +7,8 @@ use rand_core::{CryptoRng, RngCore};
 use subtle::ConstantTimeEq;
 
 use crate::{
-    AsBytes, Id, IdentityBasedKeyExchange, MyHash512, MyKdf, MyKdfExtract, PartyRole, SessKey, Ssid,
+    AsBytes, Id, IdCertificate, IdentityBasedKeyExchange, MyHash512, MyKdf, MyKdfExtract,
+    PartyRole, SessKey, Ssid,
 };
 
 type MainPubkey = CompressedRistretto;
@@ -21,6 +22,12 @@ pub struct FgIbkeCert {
     id: Id,
     X: RistrettoPoint,
     xhat: Scalar,
+}
+
+impl IdCertificate for FgIbkeCert {
+    fn id(&self) -> Id {
+        self.id
+    }
 }
 
 /// The [Fiore-Gennaro IBKE](https://www.dariofiore.it/papers/ib-ka-journal-final.pdf) with the addition of key confirmation. It also hashes the transcript

@@ -1,5 +1,7 @@
 /// Defines the signed Diffie-Hellman protocol by [Bergsma et al.](https://eprint.iacr.org/2015/015), with the AKE-to-IBKE transform applied
-use crate::{AsBytes, Id, IdentityBasedKeyExchange, MyKdf, PartyRole, SessKey, Ssid};
+use crate::{
+    AsBytes, Id, IdCertificate, IdentityBasedKeyExchange, MyKdf, PartyRole, SessKey, Ssid,
+};
 
 use ed25519_dalek::{
     Signature, SignatureError, Signer, SigningKey as SigPrivkey, Verifier,
@@ -51,6 +53,12 @@ impl SigDhCert {
 
     fn size() -> usize {
         Id::default().len() + 32 + 32 + Signature::BYTE_SIZE
+    }
+}
+
+impl IdCertificate for SigDhCert {
+    fn id(&self) -> Id {
+        self.id
     }
 }
 
