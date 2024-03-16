@@ -1,6 +1,6 @@
 # LATKE iPAKE
 
-This repo contains an implementation of the LATKE identity-binding password-authenticated key exchange (iPAKE) framework, and a few PAKEs and IBKEs which we instantiate LATKE with. There's also an implementation of the [CHIP iPAKE](https://eprint.iacr.org/2020/529) for baseline comparison in benchmarks.
+This repo contains an implementation of the [LATKE](https://eprint.iacr.org/2023/324) identity-binding password-authenticated key exchange (iPAKE) framework, and a few PAKEs and IBKEs which we instantiate LATKE with. There's also an implementation of the [CHIP iPAKE](https://eprint.iacr.org/2020/529) for baseline comparison in benchmarks.
 
 We also have some vendored support code that was slightly modified from the original:
 
